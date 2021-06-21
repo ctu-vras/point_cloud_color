@@ -1,0 +1,7 @@
+<library path="lib/libpoint_cloud_color_plugins">
+  <class name="point_cloud_color/point_cloud_color" type="point_cloud_color::PointCloudColor" base_class_type="nodelet::Nodelet">
+    <description>
+  	  Nodelet coloring point clouds using images from calibrated cameras.
+    </description>
+  </class>
+</library>
