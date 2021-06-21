@@ -1,10 +1,10 @@
 <launch>
-
+  <!-- Example launch file for 6 raw cameras -->
   <arg name="image_transport" default="raw" />
-  <arg name="camera_manager" default="viz/omnicamera_nodelet_manager" />
   <arg name="tf_prefix" default="" />
 
-  <node name="point_cloud_color" pkg="nodelet" type="nodelet" args="load point_cloud_color/point_cloud_color $(arg camera_manager)" respawn="true" output="screen">
+  <node name="point_cloud_color" pkg="nodelet" type="nodelet"
+        args="standalone point_cloud_color/point_cloud_color" respawn="true">
     <param name="image_transport"        value="$(arg image_transport)"/>
     <param name="fixed_frame"            value="$(arg tf_prefix)base_link"/>
     <param name="num_cameras"            value="6"/>
@@ -14,22 +14,5 @@
     <param name="point_cloud_queue_size" value="50"/>
     <param name="wait_for_transform"     value="0.5"/>
     <param name="default_color"          value="0x00000000"/>
-
-    <param name="camera_0/mask" value="$(find point_cloud_color)/res/camera_3.png"/>
-    <param name="camera_1/mask" value="$(find point_cloud_color)/res/camera_4_static.png"/>
-    <param name="camera_2/mask" value="$(find point_cloud_color)/res/camera_5.png"/>
-    <param name="camera_3/mask" value="$(find point_cloud_color)/res/camera_0_static.png"/>
-    <param name="camera_4/mask" value="$(find point_cloud_color)/res/camera_1.png"/>
-    <param name="camera_5/mask" value="$(find point_cloud_color)/res/camera_2.png"/>
-
-    <remap from="viz/camera_0" to="viz/camera_3"/>
-    <remap from="viz/camera_1" to="viz/camera_4"/>
-    <remap from="viz/camera_2" to="viz/camera_5"/>
-    <remap from="viz/camera_3" to="viz/camera_0"/>
-    <remap from="viz/camera_4" to="viz/camera_1"/>
-    <remap from="viz/camera_5" to="viz/camera_2"/>
-
-    <remap from="viz/cloud_in"  to="scan_point_cloud_filtered"/>
-    <remap from="viz/cloud_out" to="scan_point_cloud_color"/>
   </node>
 </launch>
