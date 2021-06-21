@@ -4,10 +4,10 @@
   <description>
     Package for coloring point clouds using calibrated cameras.
   </description>
-  <maintainer email="tpetricek@gmail.com">Tomas Petricek</maintainer>
+  <maintainer email="petrito1@fel.cvut.cz">Tomas Petricek</maintainer>
   <license>BSD</license>
   
-  <url>http://nifti.eu</url>
+  <url>https://github.com/ctu-vras/point_cloud_color</url>
   <author>Tomas Petricek</author>
   
   <buildtool_depend>catkin</buildtool_depend>
