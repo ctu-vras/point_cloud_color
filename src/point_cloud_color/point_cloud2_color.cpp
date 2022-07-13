@@ -180,7 +180,7 @@ void PointCloudColor::onInit() {
     std::string cameraMaskPath;
     pnh.param(cameraMaskParam, cameraMaskPath, cameraMaskPath);
     if (!cameraMaskPath.empty()) {
-      cameraMasks[iCam] = cv::imread(cameraMaskPath, CV_LOAD_IMAGE_GRAYSCALE);
+      cameraMasks[iCam] = cv::imread(cameraMaskPath, cv::IMREAD_GRAYSCALE);
       NODELET_INFO("%s: Camera %i: Using camera mask from %s.", getName().c_str(), iCam, cameraMaskPath.c_str());
     }
     NODELET_INFO("%s: Camera %i: Subscribing camera topic %s.", getName().c_str(), iCam, cameraTopic.c_str());
