@@ -2,300 +2,588 @@
  * Point cloud coloring from calibrated cameras.
  * Static image masks can be used to denote ROI for coloring.
  *
- * TODO: Mask out robot model dynamically.
+ * Configured field data type must match image data type.
+ * RGB image must be used with float type (default).
+ * Grayscale image must use corresponding unsigned data type.
  */
 
 #include <functional>
-#include <boost/format.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <limits>
-#include <map>
 #include <nodelet/nodelet.h>
 #include <opencv2/opencv.hpp>
-#include <pcl_conversions/pcl_conversions.h>
 #include <pluginlib/class_list_macros.hpp>
 #include <ros/ros.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/image_encodings.h>
+#include <sensor_msgs/point_cloud2_iterator.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.h>
+#include <unordered_map>
 // needs to be included after tf2_eigen
 #include <opencv2/core/eigen.hpp>
 
+namespace {
+
+size_t point_field_type_size(sensor_msgs::PointField::_datatype_type datatype)
+{
+  switch (datatype)
+  {
+    case sensor_msgs::PointField::FLOAT32: return 4;
+    case sensor_msgs::PointField::FLOAT64: return 8;
+    case sensor_msgs::PointField::INT8:    return 1;
+    case sensor_msgs::PointField::INT16:   return 2;
+    case sensor_msgs::PointField::INT32:   return 4;
+    case sensor_msgs::PointField::UINT8:   return 1;
+    case sensor_msgs::PointField::UINT16:  return 2;
+    default: throw std::runtime_error("Unknown point field data type.");
+  }
+}
+
+void append_field(const std::string& name,
+                  uint32_t count,
+                  sensor_msgs::PointField::_datatype_type datatype,
+                  sensor_msgs::PointCloud2& cloud)
+{
+  sensor_msgs::PointField field;
+  field.name = name;
+  field.offset = cloud.point_step;
+  field.datatype = datatype;
+  field.count = count;
+  cloud.fields.emplace_back(field);
+  cloud.point_step += count * point_field_type_size(datatype);
+  // Setting row_step is up to caller.
+}
+
+float rgb_to_float(const cv::Vec3b& px)
+{
+  uint32_t rgb = uint32_t(px.val[2]) << 16 | uint32_t(px.val[1]) << 8 | uint32_t(px.val[0]);
+  return *reinterpret_cast<float*>(&rgb);
+}
+
+bool camera_calibrated(const sensor_msgs::CameraInfo& camera_info)
+{
+  return camera_info.K[0] != 0.0;
+}
+
+void copy_cloud_metadata(const sensor_msgs::PointCloud2& input,
+                         sensor_msgs::PointCloud2& output)
+{
+  output.header = input.header;
+  output.height = input.height;
+  output.width = input.width;
+  output.fields = input.fields;
+  output.is_bigendian = input.is_bigendian;
+  output.point_step = input.point_step;
+  output.row_step = input.row_step;
+  output.is_dense = input.is_dense;
+}
+
+/**
+ * Copy points, assume compatible fields in the head of each point.
+ * Only point step is actually checked so that the input fits in the output.
+ * Point step is always used, row padding is neglected.
+ *
+ * @param input Input cloud.
+ * @param output Output cloud.
+ */
+void copy_cloud_data(const sensor_msgs::PointCloud2& input,
+                     sensor_msgs::PointCloud2& output)
+{
+  assert(input.point_step <= output.point_step);
+  assert(size_t(input.height) * input.width <= size_t(output.height) * output.width);
+  assert(input.width * input.point_step == input.row_step);
+  assert(output.width * output.point_step == output.row_step);
+  assert(size_t(input.height) * input.width * input.point_step == input.data.size());
+  assert(size_t(output.height) * output.width * output.point_step == output.data.size());
+  size_t n = output.height * output.width;
+  auto in_ptr = input.data.data();
+  auto out_ptr = output.data.data();
+  for (size_t i = 0; i < n; ++i, in_ptr += input.point_step, out_ptr += output.point_step)
+  {
+    std::copy(in_ptr, in_ptr + input.point_step, out_ptr);
+  }
+}
+
+enum WarningType
+{
+  camera_not_ready,
+  uncalibrated_camera,
+  incompatible_image_type,
+  image_too_old,
+  transform_not_found
+};
+
+struct PairHash
+{
+  template <class T1, class T2>
+  std::size_t operator() (const std::pair<T1, T2> &pair) const
+  {
+    return std::hash<T1>()(pair.first) ^ std::hash<T2>()(pair.second);
+  }
+};
+
+}
+
 namespace point_cloud_color {
-
-size_t getFieldIndex(const sensor_msgs::PointCloud2 &cloud, const std::string &fieldName) {
-  for (size_t i = 0; i < cloud.fields.size(); i++) {
-    if (cloud.fields[i].name == fieldName) {
-      return i;
-    }
-  }
-  throw std::runtime_error("Field " + fieldName + " not found in pointcloud.");
-}
-
-cv::Mat matFromCloud(sensor_msgs::PointCloud2::Ptr cloud, const std::string& fieldName, const int numElements) {
-  const int numPoints = cloud->width * cloud->height;
-  size_t fieldIndex = getFieldIndex(*cloud, fieldName);
-  void *data = static_cast<void *>(&cloud->data[cloud->fields[fieldIndex].offset]);
-  int matType;
-  switch (cloud->fields[fieldIndex].datatype) {
-  case sensor_msgs::PointField::FLOAT32: matType = CV_32FC1; break;
-  case sensor_msgs::PointField::FLOAT64: matType = CV_64FC1; break;
-  case sensor_msgs::PointField::UINT8:   matType = CV_8UC1;  break;
-  default:
-    assert(0);
-    break;
-  }
-  return cv::Mat(numPoints, numElements, matType, data, cloud->point_step);
-}
-
-sensor_msgs::PointCloud2::Ptr createCloudWithColorFrom(const sensor_msgs::PointCloud2::ConstPtr inCloud) {
-  // Create a copy to fix fields - use correct count 1 instead of 0.
-  pcl::PCLPointCloud2 inCloudFixed;
-  pcl_conversions::toPCL(*inCloud, inCloudFixed);
-  for (auto &f : inCloudFixed.fields) {
-    if (f.count == 0) {
-      f.count = 1;
-    }
-  }
-
-  pcl::PCLPointField rgbField;
-  rgbField.name = "rgb";
-  rgbField.datatype = sensor_msgs::PointField::FLOAT32;
-  rgbField.count = 1;
-  rgbField.offset = 0;
-  pcl::PCLPointCloud2 rgbCloud;
-  rgbCloud.header = inCloudFixed.header;
-  rgbCloud.width = inCloudFixed.width;
-  rgbCloud.height = inCloudFixed.height;
-  rgbCloud.fields.push_back(rgbField);
-  rgbCloud.is_bigendian = inCloudFixed.is_bigendian;
-  rgbCloud.is_dense = inCloudFixed.is_dense;
-  rgbCloud.point_step = 4;
-  rgbCloud.row_step = rgbCloud.width * rgbCloud.point_step;
-  rgbCloud.data.resize(rgbCloud.row_step * rgbCloud.height, 0);
-
-  pcl::PCLPointCloud2 outPcl;
-  pcl::concatenateFields(inCloudFixed, rgbCloud, outPcl);
-
-  sensor_msgs::PointCloud2::Ptr outCloud(new sensor_msgs::PointCloud2);
-  pcl_conversions::moveFromPCL(outPcl, *outCloud);
-  outCloud->header.stamp = inCloud->header.stamp; // PCL conversion crops precision of the timestamp
-  return outCloud;
-}
 
 /**
  * @brief A nodelet for coloring point clouds from calibrated cameras.
  */
 class PointCloudColor : public nodelet::Nodelet {
 public:
-  PointCloudColor();
+  PointCloudColor() = default;
   ~PointCloudColor() override = default;
   void onInit() override;
 private:
-  tf2_ros::Buffer tfBuffer;
-  tf2_ros::TransformListener transformListener;
-  std::vector<image_transport::CameraSubscriber> cameraSubscribers;
-  ros::Subscriber pointCloudSub;
-  ros::Publisher pointCloudPub;
-  std::vector<cv_bridge::CvImage::ConstPtr> images;
-  std::vector<sensor_msgs::CameraInfo::ConstPtr> cameraInfos;
-  std::vector<cv::Mat> cameraMasks;
-  float defaultColor;
-  std::string fixedFrame;
-  size_t numCameras;
-  double maxImageAge;
-  bool useFirstValid;
-  int imageQueueSize;
-  uint32_t pointCloudQueueSize;
-  double waitForTransform;
-  std::map<std::string, ros::Time> lastCamWarning;
-  double minCamWarningInterval;
-  void cameraCallback(const sensor_msgs::Image::ConstPtr &imageMsg,
-                      const sensor_msgs::CameraInfo::ConstPtr &cameraInfoMsg, int iCam);
-  void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloudMsg);
+  std::string fixed_frame_ = "odom";
+  std::string field_name_ = "rgb";
+  int field_type_ = sensor_msgs::PointField::FLOAT32;
+  float default_color_ = 0.0;
+  int num_cameras_ = 1;
+  bool synchronize_ = false;
+  double max_image_age_ = 5.0;
+  double max_cloud_age_ = 5.0;
+  bool use_first_valid_ = true;
+  double min_depth_ = 1e-3;
+  int image_queue_size_ = 1;
+  int cloud_queue_size_ = 1;
+  double wait_for_transform_ = 1.0;
+  double min_warn_period_ = 10.0;
+
+  tf2_ros::Buffer tf_buffer_ = {ros::Duration(15.0)};
+  tf2_ros::TransformListener tf_sub_ = {tf_buffer_};
+  std::vector<image_transport::CameraSubscriber> camera_subs_;
+  std::vector<image_transport::Subscriber> image_subs_;
+  std::vector<ros::Subscriber> camera_info_subs_;
+  ros::Subscriber cloud_sub_;
+  ros::Publisher cloud_pub_;
+  std::vector<cv_bridge::CvImage::ConstPtr> images_;
+  std::vector<sensor_msgs::CameraInfo::ConstPtr> cam_infos_;
+  std::vector<cv::Mat> camera_masks_;
+  std::unordered_map<std::pair<int, int>, ros::Time, PairHash> last_cam_warning_;
+
+  void readParams();
+  void setupPublishers();
+  void setupSubscribers();
+  bool cameraWarnedRecently(int i_cam, int type);
+  void updateWarningTime(int i_cam, int type);
+  bool imageCompatible(const sensor_msgs::Image& image) const;
+  void cameraCallback(const sensor_msgs::Image::ConstPtr &image,
+                      const sensor_msgs::CameraInfo::ConstPtr &camera_info, int i);
+  void imageCallback(const sensor_msgs::Image::ConstPtr& image, int i);
+  void camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& cam_info, int i);
+  void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_in);
 };
 
-PointCloudColor::PointCloudColor() :
-    tfBuffer(ros::Duration(15.0)),
-    transformListener(tfBuffer),
-    defaultColor(0.0),
-    fixedFrame("odom"),
-    numCameras(1),
-    maxImageAge(10.0),
-    useFirstValid(true),
-    imageQueueSize(1),
-    pointCloudQueueSize(1),
-    waitForTransform(1.0),
-    minCamWarningInterval(1.0) {
-}
-
-void PointCloudColor::onInit() {
-  NODELET_DEBUG("%s: Initializing...", getName().c_str());
-
-  ros::NodeHandle &nh = getNodeHandle();
+void PointCloudColor::readParams()
+{
   ros::NodeHandle &pnh = getPrivateNodeHandle();
 
-  // Get and process parameters.
-  pnh.param("fixed_frame", fixedFrame, fixedFrame);
-  NODELET_INFO("%s: Fixed frame: %s.", getName().c_str(), fixedFrame.c_str());
-  std::string defaultColorStr("0x00000000");
-  pnh.param("default_color", defaultColorStr, defaultColorStr);
-  unsigned long defaultColorUl = 0xfffffffful & strtoul(defaultColorStr.c_str(), nullptr, 0);
-  defaultColor = *reinterpret_cast<float *>(&defaultColorUl);
-  NODELET_INFO("%s: Default color: %#lx.", getName().c_str(), defaultColorUl);
-  int _numCameras;
-  pnh.param("num_cameras", _numCameras, static_cast<int>(numCameras));
-  numCameras = static_cast<size_t>(_numCameras);
-  numCameras = numCameras >= 0 ? numCameras : 0;
-  NODELET_INFO("%s: Number of cameras: %zu.", getName().c_str(), numCameras);
-  pnh.param("max_image_age", maxImageAge, maxImageAge);
-  NODELET_INFO("%s: Maximum image age: %.1f s.", getName().c_str(), maxImageAge);
-  pnh.param("use_first_valid", useFirstValid, useFirstValid);
-  NODELET_INFO("%s: Use first valid projection: %s.", getName().c_str(), useFirstValid ? "yes" : "no");
-  pnh.param("image_queue_size", imageQueueSize, imageQueueSize);
-  imageQueueSize = imageQueueSize >= 1 ? imageQueueSize : 1;
-  NODELET_INFO("%s: Image queue size: %i.", getName().c_str(), imageQueueSize);
-  int _pointCloudQueueSize;
-  pnh.param("point_cloud_queue_size", _pointCloudQueueSize, static_cast<int>(pointCloudQueueSize));
-  pointCloudQueueSize = static_cast<uint32_t>(_pointCloudQueueSize);
-  pointCloudQueueSize = pointCloudQueueSize >= 1 ? pointCloudQueueSize : 1;
-  NODELET_INFO("%s: Point cloud queue size: %u.", getName().c_str(), pointCloudQueueSize);
-  pnh.param("wait_for_transform", waitForTransform, waitForTransform);
-  waitForTransform = waitForTransform >= 0.0 ? waitForTransform : 0.0;
-  NODELET_INFO("%s: Wait for transform timeout: %.2f s.", getName().c_str(), waitForTransform);
+  pnh.param("fixed_frame", fixed_frame_, fixed_frame_);
+  NODELET_INFO("Fixed frame: %s.", fixed_frame_.c_str());
+
+  pnh.param("field_name", field_name_, field_name_);
+  NODELET_INFO("Field name: %s.", field_name_.c_str());
+
+  pnh.param("field_type", field_type_, field_type_);
+  if (field_type_ != sensor_msgs::PointField::FLOAT32
+      && field_type_ != sensor_msgs::PointField::UINT8
+      && field_type_ != sensor_msgs::PointField::UINT16)
+  {
+    NODELET_ERROR("Unsupported field data type %i used.", field_type_);
+    throw std::runtime_error("Unsupported field data type used.");
+  }
+  NODELET_INFO("Field type: %i.", field_type_);
+
+  if (field_type_ == sensor_msgs::PointField::FLOAT32) {
+    // Reinterpret as RGB float.
+    std::string default_color_str("0x00000000");
+    pnh.param("default_color", default_color_str, default_color_str);
+    unsigned long defaultColorUl = 0xfffffffful & strtoul(default_color_str.c_str(), nullptr, 0);
+    default_color_ = *reinterpret_cast<float *>(&defaultColorUl);
+    NODELET_INFO("Default color: %#lx.", defaultColorUl);
+  } else {
+    // Use as literal.
+    pnh.param("default_color", default_color_, default_color_);
+    // TODO: Check data type range.
+    NODELET_INFO("Default color: %.0f.", default_color_);
+  }
+
+  pnh.param("num_cameras", num_cameras_, num_cameras_);
+  num_cameras_ = num_cameras_ >= 0 ? num_cameras_ : 0;
+  NODELET_INFO("Number of cameras: %i.", num_cameras_);
+
+  for (int i = 0; i < num_cameras_; i++)
+  {
+    std::stringstream ss;
+    ss << "camera_" << i << "/mask";
+    std::string mask_param = ss.str();
+    std::string mask_path;
+    pnh.param(mask_param, mask_path, mask_path);
+    if (!mask_path.empty())
+    {
+      camera_masks_[i] = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
+      NODELET_INFO("Camera %i uses mask from %s.", i, mask_path.c_str());
+    }
+  }
+
+  pnh.param("synchronize", synchronize_, synchronize_);
+  NODELET_INFO("Synchronize image with camera info: %i.", synchronize_);
+
+  pnh.param("max_image_age", max_image_age_, max_image_age_);
+  NODELET_INFO("Maximum image age: %.1f s.", max_image_age_);
+
+  pnh.param("max_cloud_age", max_cloud_age_, max_cloud_age_);
+  NODELET_INFO("Maximum cloud age: %.1f s.", max_cloud_age_);
+
+  pnh.param("use_first_valid", use_first_valid_, use_first_valid_);
+  NODELET_INFO("Use first valid projection: %s.", use_first_valid_ ? "yes" : "no");
+
+  pnh.param("min_depth", min_depth_, min_depth_);
+  NODELET_INFO("Minimum depth: %.3f.", min_depth_);
+
+  pnh.param("image_queue_size", image_queue_size_, image_queue_size_);
+  image_queue_size_ = image_queue_size_ >= 1 ? image_queue_size_ : 1;
+  NODELET_INFO("Image queue size: %i.", image_queue_size_);
+
+  pnh.param("point_cloud_queue_size", cloud_queue_size_, cloud_queue_size_);  // backward compatibility
+  pnh.param("cloud_queue_size", cloud_queue_size_, cloud_queue_size_);
+  cloud_queue_size_ = cloud_queue_size_ >= 1 ? cloud_queue_size_ : 1;
+  NODELET_INFO("Point cloud queue size: %i.", cloud_queue_size_);
+
+  pnh.param("wait_for_transform", wait_for_transform_, wait_for_transform_);
+  wait_for_transform_ = wait_for_transform_ >= 0.0 ? wait_for_transform_ : 0.0;
+  NODELET_INFO("Wait for transform timeout: %.2f s.", wait_for_transform_);
+
+  pnh.param("min_warn_period", min_warn_period_, min_warn_period_);
+  wait_for_transform_ = min_warn_period_ >= 0.0 ? min_warn_period_ : 0.0;
+  NODELET_INFO("Minimum period between warnings: %.2f s.", min_warn_period_);
+}
+
+void PointCloudColor::setupPublishers()
+{
+  ros::NodeHandle &nh = getNodeHandle();
+
+  // Advertise colored point cloud topic.
+  cloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("cloud_out", cloud_queue_size_);
+}
+
+void PointCloudColor::setupSubscribers()
+{
+  ros::NodeHandle &nh = getNodeHandle();
 
   // Subscribe list of camera topics.
   image_transport::ImageTransport it(nh);
-  cameraSubscribers.resize(numCameras);
-  cameraMasks.resize(numCameras);
-  images.resize(numCameras);
-  cameraInfos.resize(numCameras);
-  for (int iCam = 0; iCam < numCameras; iCam++) {
-    std::string cameraTopic = nh.resolveName((boost::format("camera_%i/image") % iCam).str(), true);
-    std::string cameraMaskParam = (boost::format("camera_%i/mask") % iCam).str();
-    std::string cameraMaskPath;
-    pnh.param(cameraMaskParam, cameraMaskPath, cameraMaskPath);
-    if (!cameraMaskPath.empty()) {
-      cameraMasks[iCam] = cv::imread(cameraMaskPath, CV_LOAD_IMAGE_GRAYSCALE);
-      NODELET_INFO("%s: Camera %i: Using camera mask from %s.", getName().c_str(), iCam, cameraMaskPath.c_str());
+  camera_subs_.resize(num_cameras_);
+  image_subs_.resize(num_cameras_);
+  camera_info_subs_.resize(num_cameras_);
+  camera_masks_.resize(num_cameras_);
+  images_.resize(num_cameras_);
+  cam_infos_.resize(num_cameras_);
+  for (int i = 0; i < num_cameras_; i++)
+  {
+    std::stringstream ss;
+    ss << "camera_" << i << "/image";
+    std::string topic = ss.str();
+    topic = nh.resolveName(topic, true);
+    NODELET_INFO("Camera %i subscribes to %s.", i, nh.resolveName(topic, true).c_str());
+    if (synchronize_)
+    {
+      camera_subs_[i] = it.subscribeCamera(
+          topic, image_queue_size_, (std::bind(&PointCloudColor::cameraCallback,
+                                               this, std::placeholders::_1, std::placeholders::_2, i)));
     }
-    NODELET_INFO("%s: Camera %i: Subscribing camera topic %s.", getName().c_str(), iCam, cameraTopic.c_str());
-    cameraSubscribers[iCam] = it.subscribeCamera(cameraTopic, imageQueueSize,
-                                                 (std::bind(&PointCloudColor::cameraCallback, this, std::placeholders::_1, std::placeholders::_2, iCam)));
+    else
+    {
+      image_subs_[i] = it.subscribe(
+          topic, image_queue_size_, (std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)));
+      std::stringstream ss;
+      ss << "camera_" << i << "/camera_info";
+      topic = ss.str();
+      topic = nh.resolveName(topic, true);
+      camera_info_subs_[i] = nh.subscribe<sensor_msgs::CameraInfo>(
+          topic, image_queue_size_, (std::bind(&PointCloudColor::camInfoCallback, this, std::placeholders::_1, i)));
+    }
   }
-
-  // Advertise colored point cloud topic.
-  pointCloudPub = nh.advertise<sensor_msgs::PointCloud2>("cloud_out", pointCloudQueueSize);
-
-  // Subscribe point cloud topic.
-  pointCloudSub = nh.subscribe<sensor_msgs::PointCloud2>("cloud_in", pointCloudQueueSize,
-                                                         &PointCloudColor::pointCloudCallback, this);
+  // Subscribe to cloud topic.
+  cloud_sub_ = nh.subscribe<sensor_msgs::PointCloud2>("cloud_in", cloud_queue_size_, &PointCloudColor::cloudCallback, this);
 }
 
-void PointCloudColor::cameraCallback(const sensor_msgs::Image::ConstPtr &imageMsg, const sensor_msgs::CameraInfo::ConstPtr &cameraInfoMsg, const int iCam) {
-  NODELET_DEBUG("%s: Camera %i: Image frame: %s, camera info frame: %s.",
-                getName().c_str(), iCam, imageMsg->header.frame_id.c_str(), cameraInfoMsg->header.frame_id.c_str());
-  // Use frame id from image message for both image and camera info to ensure consistency.
-  images[iCam] = cv_bridge::toCvShare(imageMsg, sensor_msgs::image_encodings::BGR8);
-  cameraInfos[iCam] = cameraInfoMsg;
+void PointCloudColor::onInit()
+{
+  readParams();
+  setupPublishers();
+  setupSubscribers();
 }
 
-void PointCloudColor::pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloudMsg) {
-  const size_t numPoints = cloudMsg->width * cloudMsg->height;
-  const std::string cloudFrame = cloudMsg->header.frame_id;
-  if (numPoints == 0 || cloudMsg->data.empty()) {
-    NODELET_WARN("%s: Skipping empty point cloud in frame %s.", getName().c_str(), cloudFrame.c_str());
+bool PointCloudColor::imageCompatible(const sensor_msgs::Image& image) const
+{
+  // Check image type is compatible with field data type.
+  size_t elem_size = image.step / image.width;
+  return (field_type_ == sensor_msgs::PointField::FLOAT32 and elem_size == 3)
+      || (field_type_ != sensor_msgs::PointField::FLOAT32 and point_field_type_size(field_type_) == elem_size);
+}
+
+void PointCloudColor::imageCallback(const sensor_msgs::Image::ConstPtr& image, int i)
+{
+  NODELET_DEBUG("Image %i received in frame %s.", i, image->header.frame_id.c_str());
+  if (!imageCompatible(*image))
+  {
+    if (!cameraWarnedRecently(i, incompatible_image_type))
+    {
+      NODELET_WARN("Image with encoding %s cannot be used with field type %i and size %lu.",
+                   image->encoding.c_str(), field_type_, point_field_type_size(field_type_));
+      updateWarningTime(i, incompatible_image_type);
+    }
     return;
   }
-  sensor_msgs::PointCloud2::Ptr outCloud = createCloudWithColorFrom(cloudMsg);
-  cv::Mat rgbMat = matFromCloud(outCloud, "rgb", 1);
-  rgbMat.setTo(defaultColor);
-  // Initialize vector with projection distances from image center, used as a quality measure.
-  std::vector<float> dist(numPoints, std::numeric_limits<float>::infinity());
-  for (int iCam = 0; iCam < numCameras; iCam++) {
-    if (!images[iCam] || !cameraInfos[iCam]) {
-      NODELET_DEBUG("%s: Camera image %i has not been received yet...", getName().c_str(), iCam);
-      continue;
+  if (field_type_ == sensor_msgs::PointField::FLOAT32)
+  {
+    images_[i] = cv_bridge::toCvShare(image, sensor_msgs::image_encodings::BGR8);
+  }
+  else
+  {
+    images_[i] = cv_bridge::toCvShare(image);
+  }
+}
+
+void PointCloudColor::camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& cam_info, int i)
+{
+  NODELET_DEBUG("Camera info %i received in frame %s.", i, cam_info->header.frame_id.c_str());
+  if (!camera_calibrated(*cam_info))
+  {
+    if (!cameraWarnedRecently(i, uncalibrated_camera))
+    {
+      NODELET_WARN("Camera %i is not calibrated.", i);
+      updateWarningTime(i, uncalibrated_camera);
     }
-    // Check relative age of the point cloud and the image. Skip the image if the time span is to large.
-    const double imageAge = (outCloud->header.stamp - images[iCam]->header.stamp).toSec();
-    if (imageAge > maxImageAge) {
-      if ((ros::Time::now() - lastCamWarning[images[iCam]->header.frame_id]).toSec() >= minCamWarningInterval) {
-        NODELET_WARN("%s: Skipping image %s %.1f (> %.1f) s older than point cloud...",
-                     getName().c_str(), images[iCam]->header.frame_id.c_str(), imageAge, maxImageAge);
-        lastCamWarning[images[iCam]->header.frame_id] = ros::Time::now();
+    return;
+  }
+  cam_infos_[i] = cam_info;
+}
+
+void PointCloudColor::cameraCallback(const sensor_msgs::Image::ConstPtr& image,
+                                     const sensor_msgs::CameraInfo::ConstPtr& camera_info,
+                                     const int i) {
+  NODELET_DEBUG("Camera %i received with image frame %s and camera info frame %s.",
+                i, image->header.frame_id.c_str(), camera_info->header.frame_id.c_str());
+  imageCallback(image, i);
+  camInfoCallback(camera_info, i);
+}
+
+bool PointCloudColor::cameraWarnedRecently(int i, int type)
+{
+  std::pair<int, int> key(i, type);
+  auto it = last_cam_warning_.find(key);
+  if (it == last_cam_warning_.end())
+  {
+    return false;
+  }
+  return (ros::Time::now() - last_cam_warning_[key]).toSec() < min_warn_period_;
+}
+
+void PointCloudColor::updateWarningTime(int i, int type)
+{
+  std::pair<int, int> key(i, type);
+  last_cam_warning_[key] = ros::Time::now();
+}
+
+void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_in) {
+  auto cloud_age = (ros::Time::now() - cloud_in->header.stamp).toSec();
+  if (cloud_age > max_cloud_age_)
+  {
+    NODELET_WARN("Skipping old cloud (%.1f s > %.1f s).", cloud_age, max_cloud_age_);
+    return;
+  }
+
+  if (cloud_in->width == 0 || cloud_in->height == 0) {
+    NODELET_WARN("Skipping empty cloud %s.", cloud_in->header.frame_id.c_str());
+    return;
+  }
+
+  const size_t num_points = size_t(cloud_in->width) * cloud_in->height;
+
+  // Create cloud copy with extra field.
+  auto cloud_out = boost::make_shared<sensor_msgs::PointCloud2>();
+  copy_cloud_metadata(*cloud_in, *cloud_out);
+  // TODO: Allow re-using existing field.
+  append_field(field_name_, 1, field_type_, *cloud_out);
+  cloud_out->data.resize(size_t(cloud_out->height) * cloud_out->width * cloud_out->point_step);
+  copy_cloud_data(*cloud_in, *cloud_out);
+
+  sensor_msgs::PointCloud2Iterator<float> x_begin(*cloud_out, "x");
+  sensor_msgs::PointCloud2Iterator<float> color_begin_f(*cloud_out, field_name_);
+  sensor_msgs::PointCloud2Iterator<uint8_t> color_begin_u8(*cloud_out, field_name_);
+  sensor_msgs::PointCloud2Iterator<uint16_t> color_begin_u16(*cloud_out, field_name_);
+
+  // Set default color.
+  for (size_t j = 0; j < num_points; ++j)
+  {
+    switch (field_type_)
+    {
+      case sensor_msgs::PointField::UINT8:
+      {
+        *(color_begin_u8 + j) = uint8_t(default_color_);
+        break;
+      }
+      case sensor_msgs::PointField::UINT16:
+      {
+        *(color_begin_u16 + j) = uint16_t(default_color_);
+        break;
+      }
+      case sensor_msgs::PointField::FLOAT32:
+      {
+        *(color_begin_f + j) = default_color_;
+        break;
+      }
+    }
+  }
+
+  // Initialize vector with projection distances from image center, used as a quality measure.
+  std::vector<float> dist(num_points, std::numeric_limits<float>::infinity());
+  cv::Mat empty_mat;
+  cv::Mat zero_vec = cv::Mat::zeros(3, 1, CV_32FC1);
+
+  for (int i = 0; i < num_cameras_; ++i) {
+    if (!images_[i] || !cam_infos_[i])
+    {
+      if (!cameraWarnedRecently(i, camera_not_ready))
+      {
+        NODELET_WARN("Camera %i has not been received yet.", i);
+        updateWarningTime(i, camera_not_ready);
       }
       continue;
     }
 
-    geometry_msgs::TransformStamped cloudToCamStamped;
+    // Check relative age of the point cloud and the image.
+    // Skip the image if the time span is too large.
+    const double image_age = (cloud_out->header.stamp - images_[i]->header.stamp).toSec();
+    if (image_age > max_image_age_)
+    {
+      if (!cameraWarnedRecently(i, image_too_old))
+      {
+        NODELET_WARN("Skipping image %s much older than cloud (%.1f s > %.1f s).",
+                     images_[i]->header.frame_id.c_str(), image_age, max_image_age_);
+        updateWarningTime(i, image_too_old);
+      }
+      continue;
+    }
+
+    cv::Mat camera_matrix(3, 3, CV_64FC1, const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->K[0])));
+    cv::Mat dist_coeffs(1, int(cam_infos_[i]->D.size()), CV_64FC1, const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->D[0])));
+    camera_matrix.convertTo(camera_matrix, CV_32FC1);
+    dist_coeffs.convertTo(dist_coeffs, CV_32FC1);
+
+    geometry_msgs::TransformStamped cloud_to_cam_tf;
     try
     {
-      cloudToCamStamped = tfBuffer.lookupTransform(
-        images[iCam]->header.frame_id, images[iCam]->header.stamp, // target frame and time
-        cloudFrame, cloudMsg->header.stamp, // source frame and time
-        fixedFrame, ros::Duration(waitForTransform));
-    } catch (tf2::TransformException &e) {
-      if ((ros::Time::now() - lastCamWarning[images[iCam]->header.frame_id]).toSec() >= minCamWarningInterval) {
-        NODELET_WARN("%s: Could not transform point cloud from %s to %s. Skipping the image...",
-                     getName().c_str(), cloudFrame.c_str(), images[iCam]->header.frame_id.c_str());
-        lastCamWarning[images[iCam]->header.frame_id] = ros::Time::now();
+      cloud_to_cam_tf = tf_buffer_.lookupTransform(
+          images_[i]->header.frame_id, images_[i]->header.stamp, // target frame and time
+          cloud_out->header.frame_id.c_str(), cloud_in->header.stamp, // source frame and time
+          fixed_frame_, ros::Duration(wait_for_transform_));
+    }
+    catch (tf2::TransformException &e)
+    {
+      if (!cameraWarnedRecently(i, transform_not_found))
+      {
+        NODELET_WARN("Could not transform cloud from %s to %s. Skipping the image.",
+                     cloud_out->header.frame_id.c_str(), images_[i]->header.frame_id.c_str());
+        updateWarningTime(i, transform_not_found);
       }
       continue;
     }
+    Eigen::Isometry3f cloud_to_cam = Eigen::Isometry3f(tf2::transformToEigen(cloud_to_cam_tf));
 
-    cv::Mat camRotation, camTranslation;
-    cv::eigen2cv(Eigen::Matrix3d(tf2::transformToEigen(cloudToCamStamped).linear()), camRotation);
-    cv::eigen2cv(Eigen::Vector3d(tf2::transformToEigen(cloudToCamStamped).translation()), camTranslation);
-    cv::Mat objectPoints;
-    matFromCloud(outCloud, "x", 3).convertTo(objectPoints, CV_64FC1);
-    // Rigid transform with points in rows: (X_C)^T = (R * X_L + t)^T.
-    objectPoints = objectPoints * camRotation.t() + cv::repeat(camTranslation.t(), objectPoints.rows, 1);
-    cv::Mat cameraMatrix(3, 3, CV_64FC1, const_cast<void *>(reinterpret_cast<const void *>(&cameraInfos[iCam]->K[0])));
-    cv::Mat distCoeffs(1, static_cast<int>(cameraInfos[iCam]->D.size()), CV_64FC1, const_cast<void *>(reinterpret_cast<const void *>(&cameraInfos[iCam]->D[0])));
-    cv::Mat imagePoints;
-    cv::projectPoints(objectPoints.reshape(3), cv::Mat::zeros(3, 1, CV_64FC1), cv::Mat::zeros(3, 1, CV_64FC1), cameraMatrix, distCoeffs, imagePoints);
-
-    for (int iPoint = 0; iPoint < numPoints; iPoint++) {
+    // Gather points in front of camera for projection.
+    sensor_msgs::PointCloud2Iterator<float> x_iter = x_begin;
+    std::vector<size_t> indices;
+    std::vector<cv::Vec3f> x_cam_vec;
+    for (size_t j = 0; j < num_points; ++j, ++x_iter)
+    {
       // Continue if we already have got a color.
-      if (useFirstValid && dist[iPoint] < DBL_MAX) {
+      if (use_first_valid_ && std::isfinite(dist[j]))
+      {
+        // TODO: Default
         continue;
       }
-      const double z = objectPoints.at<double>(iPoint, 2);
-      // Skip points behind the camera.
-      if (z <= 0.0) {
+
+      // Transform to camera frame.
+      Eigen::Map<Eigen::Vector3f> x_cloud(&x_iter[0]);
+      Eigen::Vector3f x_cam = cloud_to_cam * x_cloud;
+
+      // Skip points behind camera.
+      if (x_cam(2) < min_depth_)
+      {
+        // TODO: Default
         continue;
       }
-      const cv::Vec2d pt = imagePoints.at<cv::Vec2d>(iPoint, 0);
-      const double x = round(pt.val[0]);
-      const double y = round(pt.val[1]);
+      indices.push_back(j);
+      x_cam_vec.emplace_back(cv::Vec3f(x_cam(0), x_cam(1), x_cam(2)));
+    }
+
+    if (indices.empty())
+    {
+      continue;
+    }
+
+    std::vector<cv::Vec2f> u_vec;
+    cv::projectPoints(x_cam_vec, zero_vec, zero_vec, camera_matrix, dist_coeffs, u_vec);
+
+    for (int j = 0; j < indices.size(); ++j)
+    {
       // Skip points outside the image.
-      if (x < 0.0 || y < 0.0 || x >= static_cast<double>(cameraInfos[iCam]->width) || y >= static_cast<double>(cameraInfos[iCam]->height)) {
+      const float x = u_vec[j][0];
+      const float y = u_vec[j][1];
+      int xi = int(std::round(x));
+      int yi = int(std::round(y));
+      if (x < 0.0 || x > float(cam_infos_[i]->width - 1)
+          || y < 0.0 || y > float(cam_infos_[i]->height - 1))
+      {
         continue;
       }
+
       // Apply static mask with image ROI to be used for coloring.
-      const int yi = static_cast<int>(y);
-      const int xi = static_cast<int>(x);
-      if (!cameraMasks[iCam].empty() && !cameraMasks[iCam].at<uint8_t>(yi, xi)) {
+      if (!camera_masks_[i].empty() && !camera_masks_[i].at<uint8_t>(yi, xi))
+      {
         // Pixel masked out.
         continue;
       }
-      const float r = hypot(static_cast<float>(cameraInfos[iCam]->width / 2.0 - xi), static_cast<float>(cameraInfos[iCam]->height / 2.0 - yi));
-      if (r >= dist[iPoint]) {
-        // Keep color from the previous projection closer to image center.
+
+      // Keep color from projection closest to image center.
+      const float r = hypot(float(cam_infos_[i]->width) / 2 - x,
+                            float(cam_infos_[i]->height) / 2 - y);
+      if (r >= dist[indices[j]])
+      {
         continue;
       }
-      dist[iPoint] = r;
-      const cv::Vec3b px = images[iCam]->image.at<cv::Vec3b>(static_cast<int>(y), static_cast<int>(x));
-      uint32_t rgb = static_cast<uint32_t>(px.val[2]) << 16 | static_cast<uint32_t>(px.val[1]) << 8 | static_cast<uint32_t>(px.val[0]);
-      rgbMat.at<float>(iPoint, 0) = *reinterpret_cast<float*>(&rgb);
+      dist[indices[j]] = r;
+
+      int offset = int(indices[j]);
+      switch (field_type_)
+      {
+        case sensor_msgs::PointField::UINT8:
+        {
+          *(color_begin_u8 + offset) =  images_[i]->image.at<uint8_t>(yi, xi);
+          break;
+        }
+        case sensor_msgs::PointField::UINT16:
+        {
+          *(color_begin_u16 + offset) =  images_[i]->image.at<uint16_t>(yi, xi);
+          break;
+        }
+        case sensor_msgs::PointField::FLOAT32:
+        {
+          *(color_begin_f + offset) = rgb_to_float(images_[i]->image.at<cv::Vec3b>(yi, xi));
+          break;
+        }
+      }
     }
   }
-  pointCloudPub.publish(outCloud);
+  cloud_pub_.publish(cloud_out);
 }
 
 } /* namespace point_cloud_color */

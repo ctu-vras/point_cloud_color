@@ -18,10 +18,15 @@ Package point_cloud_color provides a nodelet for coloring point clouds using cal
 
 ### Parameters
 - `fixed_frame` (`str`) Fixed frame to use when transforming point clouds to camera frame.
+- `field_name` (`str`) Cloud field name with color.
+- `field_type` (`str`) Cloud field type (from `sensor_msgs/PointField`), must match the images.
 - `default_color` (`str`) Default color to be assigned to the point.
 - `num_cameras` (`int`) Number of cameras to subscribe.
+- `synchronize` (`bool`) Whether to synchronize images with camera infos.
 - `max_image_age` (`double`) Maximum image age to be used for coloring.
+- `max_cloud_age` (`double`) Maximum cloud age to use in coloring.
 - `use_first_valid` (`bool`) Use first valid point projection, or best, otherwise.
+- `min_depth` (`double`) Minimum point depth to project.
 - `image_queue_size` (`int`) Image queue size.
 - `point_cloud_queue_size` (`int`) Point cloud queue size.
 - `wait_for_transform` (`double`) Duration for waiting for the transform to become available.

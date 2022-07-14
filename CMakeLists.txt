@@ -6,20 +6,18 @@ find_package(catkin REQUIRED
     cv_bridge
     image_transport
     nodelet
-    pcl_conversions
     roscpp
     sensor_msgs
     tf2_eigen
     tf2_ros
 )
-find_package(OpenCV REQUIRED COMPONENTS core)
+find_package(OpenCV REQUIRED COMPONENTS calib3d core)
 
 catkin_package(
   CATKIN_DEPENDS
     cv_bridge
     image_transport
     nodelet
-    pcl_conversions
     roscpp
     sensor_msgs
     tf2_eigen
