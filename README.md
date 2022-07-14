@@ -19,7 +19,7 @@ Package point_cloud_color provides a nodelet for coloring point clouds using cal
 ### Parameters
 - `fixed_frame` (`str`) Fixed frame to use when transforming point clouds to camera frame.
 - `field_name` (`str`) Cloud field name with color.
-- `field_type` (`str`) Cloud field type (from `sensor_msgs/PointField`), must much the images.
+- `field_type` (`str`) Cloud field type (from `sensor_msgs/PointField`), must match the images.
 - `default_color` (`str`) Default color to be assigned to the point.
 - `num_cameras` (`int`) Number of cameras to subscribe.
 - `synchronize` (`bool`) Whether to synchronize images with camera infos.
