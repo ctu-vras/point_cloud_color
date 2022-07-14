@@ -420,7 +420,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
   sensor_msgs::PointCloud2Iterator<uint8_t> color_begin_u8(*cloud_out, field_name_);
   sensor_msgs::PointCloud2Iterator<uint16_t> color_begin_u16(*cloud_out, field_name_);
 
-  // TODO: Set default color.
+  // Set default color.
   for (size_t j = 0; j < num_points; ++j)
   {
     switch (field_type_)
