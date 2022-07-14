@@ -22,6 +22,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.h>
+#include <unordered_map>
 // needs to be included after tf2_eigen
 #include <opencv2/core/eigen.hpp>
 
@@ -107,6 +108,24 @@ void copy_cloud_data(const sensor_msgs::PointCloud2& input,
   }
 }
 
+enum WarningType
+{
+  camera_not_ready,
+  uncalibrated_camera,
+  incompatible_image_type,
+  image_too_old,
+  transform_not_found
+};
+
+struct PairHash
+{
+  template <class T1, class T2>
+  std::size_t operator() (const std::pair<T1, T2> &pair) const
+  {
+    return std::hash<T1>()(pair.first) ^ std::hash<T2>()(pair.second);
+  }
+};
+
 }
 
 namespace point_cloud_color {
@@ -133,7 +152,7 @@ private:
   int image_queue_size_ = 1;
   int cloud_queue_size_ = 1;
   double wait_for_transform_ = 1.0;
-  double min_cam_warning_interval_ = 1.0;
+  double min_warn_period_ = 10.0;
 
   tf2_ros::Buffer tf_buffer_ = {ros::Duration(15.0)};
   tf2_ros::TransformListener tf_sub_ = {tf_buffer_};
@@ -145,12 +164,13 @@ private:
   std::vector<cv_bridge::CvImage::ConstPtr> images_;
   std::vector<sensor_msgs::CameraInfo::ConstPtr> cam_infos_;
   std::vector<cv::Mat> camera_masks_;
-  std::vector<ros::Time> last_cam_warning_;
+  std::unordered_map<std::pair<int, int>, ros::Time, PairHash> last_cam_warning_;
 
-  bool cameraWarnedRecently(int i_cam);
   void readParams();
   void setupPublishers();
   void setupSubscribers();
+  bool cameraWarnedRecently(int i_cam, int type);
+  void updateWarningTime(int i_cam, int type);
   bool imageCompatible(const sensor_msgs::Image& image) const;
   void cameraCallback(const sensor_msgs::Image::ConstPtr &image,
                       const sensor_msgs::CameraInfo::ConstPtr &camera_info, int iCam);
@@ -196,7 +216,6 @@ void PointCloudColor::readParams()
   pnh.param("num_cameras", num_cameras_, num_cameras_);
   num_cameras_ = num_cameras_ >= 0 ? num_cameras_ : 0;
   NODELET_INFO("Number of cameras: %i.", num_cameras_);
-  last_cam_warning_.resize(num_cameras_, ros::Time());
 
   for (int i = 0; i < num_cameras_; i++)
   {
@@ -238,6 +257,10 @@ void PointCloudColor::readParams()
   pnh.param("wait_for_transform", wait_for_transform_, wait_for_transform_);
   wait_for_transform_ = wait_for_transform_ >= 0.0 ? wait_for_transform_ : 0.0;
   NODELET_INFO("Wait for transform timeout: %.2f s.", wait_for_transform_);
+
+  pnh.param("min_warn_period", min_warn_period_, min_warn_period_);
+  wait_for_transform_ = min_warn_period_ >= 0.0 ? min_warn_period_ : 0.0;
+  NODELET_INFO("Minimum period between warnings: %.2f s.", min_warn_period_);
 }
 
 void PointCloudColor::setupPublishers()
@@ -309,8 +332,12 @@ void PointCloudColor::imageCallback(const sensor_msgs::Image::ConstPtr& image, i
   NODELET_DEBUG("Image %i received in frame %s.", i, image->header.frame_id.c_str());
   if (!imageCompatible(*image))
   {
-    NODELET_WARN("Image with encoding %s cannot be used with field type %i and size %lu.",
-                 image->encoding.c_str(), field_type_, point_field_type_size(field_type_));
+    if (!cameraWarnedRecently(i, incompatible_image_type))
+    {
+      NODELET_WARN("Image with encoding %s cannot be used with field type %i and size %lu.",
+                   image->encoding.c_str(), field_type_, point_field_type_size(field_type_));
+      updateWarningTime(i, incompatible_image_type);
+    }
     return;
   }
   if (field_type_ == sensor_msgs::PointField::FLOAT32)
@@ -328,10 +355,10 @@ void PointCloudColor::camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& c
   NODELET_DEBUG("Camera info %i received in frame %s.", i, cam_info->header.frame_id.c_str());
   if (!camera_calibrated(*cam_info))
   {
-    if (!cameraWarnedRecently(i))
+    if (!cameraWarnedRecently(i, uncalibrated_camera))
     {
       NODELET_WARN("Camera %i is not calibrated.", i);
-      last_cam_warning_[i] = ros::Time::now();
+      updateWarningTime(i, uncalibrated_camera);
     }
     return;
   }
@@ -347,9 +374,21 @@ void PointCloudColor::cameraCallback(const sensor_msgs::Image::ConstPtr& image,
   camInfoCallback(camera_info, iCam);
 }
 
-bool PointCloudColor::cameraWarnedRecently(int i_cam)
+bool PointCloudColor::cameraWarnedRecently(int i, int type)
 {
-  return (ros::Time::now() - last_cam_warning_[i_cam]).toSec() < min_cam_warning_interval_;
+  std::pair<int, int> key(i, type);
+  auto it = last_cam_warning_.find(key);
+  if (it == last_cam_warning_.end())
+  {
+    return false;
+  }
+  return (ros::Time::now() - last_cam_warning_[key]).toSec() < min_warn_period_;
+}
+
+void PointCloudColor::updateWarningTime(int i, int type)
+{
+  std::pair<int, int> key(i, type);
+  last_cam_warning_[key] = ros::Time::now();
 }
 
 void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_in) {
@@ -390,10 +429,10 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
   for (int i = 0; i < num_cameras_; ++i) {
     if (!images_[i] || !cam_infos_[i])
     {
-      if (!cameraWarnedRecently(i))
+      if (!cameraWarnedRecently(i, camera_not_ready))
       {
         NODELET_WARN("Camera %i has not been received yet.", i);
-        last_cam_warning_[i] = ros::Time::now();
+        updateWarningTime(i, camera_not_ready);
       }
       continue;
     }
@@ -403,11 +442,11 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
     const double image_age = (cloud_out->header.stamp - images_[i]->header.stamp).toSec();
     if (image_age > max_image_age_)
     {
-      if (!cameraWarnedRecently(i))
+      if (!cameraWarnedRecently(i, image_too_old))
       {
         NODELET_WARN("Skipping image %s much older than cloud (%.1f s > %.1f s).",
                      images_[i]->header.frame_id.c_str(), image_age, max_image_age_);
-        last_cam_warning_[i] = ros::Time::now();
+        updateWarningTime(i, image_too_old);
       }
       continue;
     }
@@ -428,11 +467,11 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
     }
     catch (tf2::TransformException &e)
     {
-      if (!cameraWarnedRecently(i))
+      if (!cameraWarnedRecently(i, transform_not_found))
       {
         NODELET_WARN("Could not transform cloud from %s to %s. Skipping the image.",
                      cloud_out->header.frame_id.c_str(), images_[i]->header.frame_id.c_str());
-        last_cam_warning_[i] = ros::Time::now();
+        updateWarningTime(i, transform_not_found);
       }
       continue;
     }
