@@ -55,7 +55,7 @@ void append_field(const std::string& name,
   field.count = count;
   cloud.fields.emplace_back(field);
   cloud.point_step += count * point_field_type_size(datatype);
-  // Setting row_step is up to caller.
+  cloud.row_step = cloud.width * cloud.point_step;
 }
 
 float rgb_to_float(const cv::Vec3b& px)
@@ -106,6 +106,16 @@ void copy_cloud_data(const sensor_msgs::PointCloud2& input,
   {
     std::copy(in_ptr, in_ptr + input.point_step, out_ptr);
   }
+}
+
+template<class T>
+T clip(T value, T min, T max)
+{
+  if (value < min || std::isnan(value))
+    value = min;
+  if (value > max)
+    value = max;
+  return value;
 }
 
 enum WarningType
@@ -203,13 +213,17 @@ void PointCloudColor::readParams()
     // Reinterpret as RGB float.
     std::string default_color_str("0x00000000");
     pnh.param("default_color", default_color_str, default_color_str);
-    unsigned long defaultColorUl = 0xfffffffful & strtoul(default_color_str.c_str(), nullptr, 0);
-    default_color_ = *reinterpret_cast<float *>(&defaultColorUl);
-    NODELET_INFO("Default color: %#lx.", defaultColorUl);
+    uint32_t default_color_uint = 0xfffffffful & strtoul(default_color_str.c_str(), nullptr, 0);
+    default_color_ = *reinterpret_cast<float *>(&default_color_uint);
+    NODELET_INFO("Default color: %#x.", default_color_uint);
   } else {
     // Use as literal.
     pnh.param("default_color", default_color_, default_color_);
-    // TODO: Check data type range.
+    // Clip to valid ranges.
+    if (field_type_ == sensor_msgs::PointField::UINT8)
+      default_color_ = clip<float>(default_color_, 0.0f, std::numeric_limits<uint8_t>::max());
+    else if (field_type_ == sensor_msgs::PointField::UINT16)
+      default_color_ = clip<float>(default_color_, 0.0f, std::numeric_limits<uint16_t>::max());
     NODELET_INFO("Default color: %.0f.", default_color_);
   }
 
