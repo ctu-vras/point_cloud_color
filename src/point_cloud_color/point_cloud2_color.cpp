@@ -250,7 +250,8 @@ void PointCloudColor::readParams()
   image_queue_size_ = image_queue_size_ >= 1 ? image_queue_size_ : 1;
   NODELET_INFO("Image queue size: %i.", image_queue_size_);
 
-  pnh.param("point_cloud_queue_size", cloud_queue_size_, cloud_queue_size_);
+  pnh.param("point_cloud_queue_size", cloud_queue_size_, cloud_queue_size_);  // backward compatibility
+  pnh.param("cloud_queue_size", cloud_queue_size_, cloud_queue_size_);
   cloud_queue_size_ = cloud_queue_size_ >= 1 ? cloud_queue_size_ : 1;
   NODELET_INFO("Point cloud queue size: %i.", cloud_queue_size_);
 
