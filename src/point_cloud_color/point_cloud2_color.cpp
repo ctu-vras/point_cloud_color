@@ -420,6 +420,27 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
   sensor_msgs::PointCloud2Iterator<uint16_t> color_begin_u16(*cloud_out, field_name_);
 
   // TODO: Set default color.
+  for (size_t j = 0; j < num_points; ++j)
+  {
+    switch (field_type_)
+    {
+      case sensor_msgs::PointField::UINT8:
+      {
+        *(color_begin_u8 + j) = uint8_t(default_color_);
+        break;
+      }
+      case sensor_msgs::PointField::UINT16:
+      {
+        *(color_begin_u16 + j) = uint16_t(default_color_);
+        break;
+      }
+      case sensor_msgs::PointField::FLOAT32:
+      {
+        *(color_begin_f + j) = default_color_;
+        break;
+      }
+    }
+  }
 
   // Initialize vector with projection distances from image center, used as a quality measure.
   std::vector<float> dist(num_points, std::numeric_limits<float>::infinity());
