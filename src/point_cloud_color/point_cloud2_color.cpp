@@ -173,7 +173,7 @@ private:
   void updateWarningTime(int i_cam, int type);
   bool imageCompatible(const sensor_msgs::Image& image) const;
   void cameraCallback(const sensor_msgs::Image::ConstPtr &image,
-                      const sensor_msgs::CameraInfo::ConstPtr &camera_info, int iCam);
+                      const sensor_msgs::CameraInfo::ConstPtr &camera_info, int i);
   void imageCallback(const sensor_msgs::Image::ConstPtr& image, int i);
   void camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& cam_info, int i);
   void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_in);
@@ -201,9 +201,9 @@ void PointCloudColor::readParams()
 
   if (field_type_ == sensor_msgs::PointField::FLOAT32) {
     // Reinterpret as RGB float.
-    std::string defaultColorStr("0x00000000");
-    pnh.param("default_color", defaultColorStr, defaultColorStr);
-    unsigned long defaultColorUl = 0xfffffffful & strtoul(defaultColorStr.c_str(), nullptr, 0);
+    std::string default_color_str("0x00000000");
+    pnh.param("default_color", default_color_str, default_color_str);
+    unsigned long defaultColorUl = 0xfffffffful & strtoul(default_color_str.c_str(), nullptr, 0);
     default_color_ = *reinterpret_cast<float *>(&defaultColorUl);
     NODELET_INFO("Default color: %#lx.", defaultColorUl);
   } else {
@@ -368,11 +368,11 @@ void PointCloudColor::camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& c
 
 void PointCloudColor::cameraCallback(const sensor_msgs::Image::ConstPtr& image,
                                      const sensor_msgs::CameraInfo::ConstPtr& camera_info,
-                                     const int iCam) {
+                                     const int i) {
   NODELET_DEBUG("Camera %i received with image frame %s and camera info frame %s.",
-                iCam, image->header.frame_id.c_str(), camera_info->header.frame_id.c_str());
-  imageCallback(image, iCam);
-  camInfoCallback(camera_info, iCam);
+                i, image->header.frame_id.c_str(), camera_info->header.frame_id.c_str());
+  imageCallback(image, i);
+  camInfoCallback(camera_info, i);
 }
 
 bool PointCloudColor::cameraWarnedRecently(int i, int type)
@@ -477,7 +477,6 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
     cv::Mat dist_coeffs(1, int(cam_infos_[i]->D.size()), CV_64FC1, const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->D[0])));
     camera_matrix.convertTo(camera_matrix, CV_32FC1);
     dist_coeffs.convertTo(dist_coeffs, CV_32FC1);
-    cv::Mat color;
 
     geometry_msgs::TransformStamped cloud_to_cam_tf;
     try
