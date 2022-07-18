@@ -495,10 +495,11 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
     geometry_msgs::TransformStamped cloud_to_cam_tf;
     try
     {
+      auto wait = wait_for_transform_ - (ros::Time::now() - images_[i]->header.stamp).toSec();
       cloud_to_cam_tf = tf_buffer_.lookupTransform(
           images_[i]->header.frame_id, images_[i]->header.stamp, // target frame and time
           cloud_out->header.frame_id.c_str(), cloud_in->header.stamp, // source frame and time
-          fixed_frame_, ros::Duration(wait_for_transform_));
+          fixed_frame_, ros::Duration(wait));
     }
     catch (tf2::TransformException &e)
     {
