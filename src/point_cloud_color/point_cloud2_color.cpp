@@ -298,6 +298,7 @@ void PointCloudColor::setupSubscribers()
   camera_masks_.resize(num_cameras_);
   images_.resize(num_cameras_);
   cam_infos_.resize(num_cameras_);
+  image_transport::TransportHints transport_hints("raw", {}, getPrivateNodeHandle());
   for (int i = 0; i < num_cameras_; i++)
   {
     std::stringstream ss;
@@ -309,12 +310,12 @@ void PointCloudColor::setupSubscribers()
     {
       camera_subs_[i] = it.subscribeCamera(
           topic, image_queue_size_, (std::bind(&PointCloudColor::cameraCallback,
-                                               this, std::placeholders::_1, std::placeholders::_2, i)));
+                                               this, std::placeholders::_1, std::placeholders::_2, i)), {}, transport_hints);
     }
     else
     {
       image_subs_[i] = it.subscribe(
-          topic, image_queue_size_, (std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)));
+          topic, image_queue_size_, (std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)), {}, transport_hints);
       std::stringstream ss;
       ss << "camera_" << i << "/camera_info";
       topic = ss.str();
