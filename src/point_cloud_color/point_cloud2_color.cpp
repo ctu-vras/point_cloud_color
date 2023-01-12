@@ -231,6 +231,7 @@ void PointCloudColor::readParams()
   num_cameras_ = num_cameras_ >= 0 ? num_cameras_ : 0;
   NODELET_INFO("Number of cameras: %i.", num_cameras_);
 
+  camera_masks_.resize(num_cameras_);
   for (int i = 0; i < num_cameras_; i++)
   {
     std::stringstream ss;
@@ -240,8 +241,19 @@ void PointCloudColor::readParams()
     pnh.param(mask_param, mask_path, mask_path);
     if (!mask_path.empty())
     {
-      camera_masks_[i] = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
       NODELET_INFO("Camera %i uses mask from %s.", i, mask_path.c_str());
+      try
+      {
+        camera_masks_[i] = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
+      }
+      catch (const std::exception& e)
+      {
+        NODELET_ERROR_STREAM("Error loading mask image: " << e.what());
+      }
+      if (camera_masks_[i].empty())
+      {
+        NODELET_ERROR("Reading the mask image failed.");
+      }
     }
   }
 
@@ -295,7 +307,6 @@ void PointCloudColor::setupSubscribers()
   camera_subs_.resize(num_cameras_);
   image_subs_.resize(num_cameras_);
   camera_info_subs_.resize(num_cameras_);
-  camera_masks_.resize(num_cameras_);
   images_.resize(num_cameras_);
   cam_infos_.resize(num_cameras_);
   for (int i = 0; i < num_cameras_; i++)
@@ -553,13 +564,14 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
       // Skip points outside the image.
       const float x = u_vec[j][0];
       const float y = u_vec[j][1];
-      int xi = int(std::round(x));
-      int yi = int(std::round(y));
-      if (x < 0.0 || x > float(cam_infos_[i]->width - 1)
-          || y < 0.0 || y > float(cam_infos_[i]->height - 1))
+      if (x < 0.0 || x > float(cam_infos_[i]->width - 1) || !std::isfinite(x)
+          || y < 0.0 || y > float(cam_infos_[i]->height - 1) || !std::isfinite(y))
       {
         continue;
       }
+
+      int xi = int(std::round(x));
+      int yi = int(std::round(y));
 
       // Apply static mask with image ROI to be used for coloring.
       if (!camera_masks_[i].empty() && !camera_masks_[i].at<uint8_t>(yi, xi))
