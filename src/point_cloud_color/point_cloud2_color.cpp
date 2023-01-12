@@ -60,7 +60,7 @@ void append_field(const std::string& name,
 
 float rgb_to_float(const cv::Vec3b& px)
 {
-  uint32_t rgb = uint32_t(px.val[2]) << 16 | uint32_t(px.val[1]) << 8 | uint32_t(px.val[0]);
+  uint32_t rgb = uint32_t(0xff) << 24 | uint32_t(px.val[2]) << 16 | uint32_t(px.val[1]) << 8 | uint32_t(px.val[0]);
   return *reinterpret_cast<float*>(&rgb);
 }
 
@@ -309,6 +309,7 @@ void PointCloudColor::setupSubscribers()
   camera_info_subs_.resize(num_cameras_);
   images_.resize(num_cameras_);
   cam_infos_.resize(num_cameras_);
+  image_transport::TransportHints transport_hints("raw", {}, getPrivateNodeHandle());
   for (int i = 0; i < num_cameras_; i++)
   {
     std::stringstream ss;
@@ -320,12 +321,12 @@ void PointCloudColor::setupSubscribers()
     {
       camera_subs_[i] = it.subscribeCamera(
           topic, image_queue_size_, (std::bind(&PointCloudColor::cameraCallback,
-                                               this, std::placeholders::_1, std::placeholders::_2, i)));
+                                               this, std::placeholders::_1, std::placeholders::_2, i)), {}, transport_hints);
     }
     else
     {
       image_subs_[i] = it.subscribe(
-          topic, image_queue_size_, (std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)));
+          topic, image_queue_size_, (std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)), {}, transport_hints);
       std::stringstream ss;
       ss << "camera_" << i << "/camera_info";
       topic = ss.str();
@@ -541,8 +542,8 @@ void PointCloudColor::cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cl
       Eigen::Map<Eigen::Vector3f> x_cloud(&x_iter[0]);
       Eigen::Vector3f x_cam = cloud_to_cam * x_cloud;
 
-      // Skip points behind camera.
-      if (x_cam(2) < min_depth_)
+      // Skip NaN points and points behind camera.
+      if (!std::isfinite(x_cam(0)) || !std::isfinite(x_cam(1)) || !std::isfinite(x_cam(2)) || x_cam(2) < min_depth_)
       {
         // TODO: Default
         continue;
