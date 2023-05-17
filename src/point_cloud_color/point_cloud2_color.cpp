@@ -351,6 +351,7 @@ bool PointCloudColor::imageCompatible(const sensor_msgs::Image& image) const
   // Check image type is compatible with field data type.
   size_t elem_size = image.step / image.width;
   return (field_type_ == sensor_msgs::PointField::FLOAT32 and elem_size == 3)
+      || (field_type_ == sensor_msgs::PointField::FLOAT32 and elem_size == 1)
       || (field_type_ != sensor_msgs::PointField::FLOAT32 and point_field_type_size(field_type_) == elem_size);
 }
 
