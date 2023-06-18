@@ -1,11 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+
+<!--
+SPDX-License-Identifier: BSD-3-Clause
+SPDX-FileCopyrightText: Czech Technical University in Prague
+-->
+
 <launch>
   <!-- Example launch file for 6 raw cameras -->
   <arg name="image_transport" default="raw" />
+  <arg name="point_cloud_transport" default="raw" />
   <arg name="tf_prefix" default="" />
 
   <node name="point_cloud_color" pkg="nodelet" type="nodelet"
         args="standalone point_cloud_color/point_cloud_color" respawn="true">
     <param name="image_transport"        value="$(arg image_transport)"/>
+    <param name="point_cloud_transport"  value="$(arg point_cloud_transport)"/>
     <param name="fixed_frame"            value="$(arg tf_prefix)base_link"/>
     <param name="num_cameras"            value="6"/>
     <param name="max_image_age"          value="5.0"/>
@@ -14,5 +23,6 @@
     <param name="point_cloud_queue_size" value="50"/>
     <param name="wait_for_transform"     value="0.5"/>
     <param name="default_color"          value="0x00000000"/>
+    <param name="synchronize"            value="false"/>
   </node>
 </launch>

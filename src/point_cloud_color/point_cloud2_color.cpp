@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-FileCopyrightText: Czech Technical University in Prague
+
 /**
  * Point cloud coloring from calibrated cameras.
  * Static image masks can be used to denote ROI for coloring.
@@ -14,6 +17,7 @@
 #include <nodelet/nodelet.h>
 #include <opencv2/opencv.hpp>
 #include <pluginlib/class_list_macros.hpp>
+#include <point_cloud_transport/point_cloud_transport.h>
 #include <ros/ros.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/image_encodings.h>
@@ -169,8 +173,8 @@ private:
   std::vector<image_transport::CameraSubscriber> camera_subs_;
   std::vector<image_transport::Subscriber> image_subs_;
   std::vector<ros::Subscriber> camera_info_subs_;
-  ros::Subscriber cloud_sub_;
-  ros::Publisher cloud_pub_;
+  point_cloud_transport::Subscriber cloud_sub_;
+  point_cloud_transport::Publisher cloud_pub_;
   std::vector<cv_bridge::CvImage::ConstPtr> images_;
   std::vector<sensor_msgs::CameraInfo::ConstPtr> cam_infos_;
   std::vector<cv::Mat> camera_masks_;
@@ -294,8 +298,10 @@ void PointCloudColor::setupPublishers()
 {
   ros::NodeHandle &nh = getNodeHandle();
 
+  point_cloud_transport::PointCloudTransport pct(nh);
+  
   // Advertise colored point cloud topic.
-  cloud_pub_ = nh.advertise<sensor_msgs::PointCloud2>("cloud_out", cloud_queue_size_);
+  cloud_pub_ = pct.advertise("cloud_out", cloud_queue_size_);
 }
 
 void PointCloudColor::setupSubscribers()
@@ -336,7 +342,10 @@ void PointCloudColor::setupSubscribers()
     }
   }
   // Subscribe to cloud topic.
-  cloud_sub_ = nh.subscribe<sensor_msgs::PointCloud2>("cloud_in", cloud_queue_size_, &PointCloudColor::cloudCallback, this);
+  point_cloud_transport::PointCloudTransport pct(nh);
+  point_cloud_transport::TransportHints cloud_transport_hints("raw", {}, getPrivateNodeHandle());
+  cloud_sub_ = pct.subscribe(
+          "cloud_in", cloud_queue_size_, &PointCloudColor::cloudCallback, this, cloud_transport_hints);
 }
 
 void PointCloudColor::onInit()

@@ -6,6 +6,7 @@ find_package(catkin REQUIRED
     cv_bridge
     image_transport
     nodelet
+    point_cloud_transport
     roscpp
     sensor_msgs
     tf2_eigen
@@ -13,18 +14,7 @@ find_package(catkin REQUIRED
 )
 find_package(OpenCV REQUIRED COMPONENTS calib3d core)
 
-catkin_package(
-  CATKIN_DEPENDS
-    cv_bridge
-    image_transport
-    nodelet
-    roscpp
-    sensor_msgs
-    tf2_eigen
-    tf2_ros
-  DEPENDS OpenCV
-  LIBRARIES ${PROJECT_NAME}_plugins
-)
+catkin_package()
 
 include_directories(${catkin_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
 
