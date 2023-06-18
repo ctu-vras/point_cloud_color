@@ -2,8 +2,8 @@
 Changelog for package point_cloud_color
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.2.1 (2023-06-19)
+------------------
 * Added point_cloud_transport integration.
 * Support MONO8 images.
 * Noetic compatibility.
