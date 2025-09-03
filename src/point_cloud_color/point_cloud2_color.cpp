@@ -290,7 +290,7 @@ void PointCloudColor::readParams()
   NODELET_INFO("Wait for transform timeout: %.2f s.", wait_for_transform_);
 
   pnh.param("min_warn_period", min_warn_period_, min_warn_period_);
-  wait_for_transform_ = min_warn_period_ >= 0.0 ? min_warn_period_ : 0.0;
+  min_warn_period_ = min_warn_period_ >= 0.0 ? min_warn_period_ : 0.0;
   NODELET_INFO("Minimum period between warnings: %.2f s.", min_warn_period_);
 }
 
