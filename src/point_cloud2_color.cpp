@@ -200,6 +200,7 @@ private:
   float default_color_ = 0.0;
   int num_cameras_ = 1;
   bool synchronize_ = false;
+  bool print_delay_ = false;
   double max_image_age_ = 5.0;
   double max_cloud_age_ = 5.0;
   bool use_first_valid_ = true;
@@ -301,6 +302,7 @@ void PointCloudColor::readParams()
   }
 
   synchronize_        = this->declare_parameter("synchronize", synchronize_);
+  print_delay_        = this->declare_parameter("print_delay", print_delay_);
   max_image_age_      = this->declare_parameter("max_image_age", max_image_age_);
   max_cloud_age_      = this->declare_parameter("max_cloud_age", max_cloud_age_);
   use_first_valid_    = this->declare_parameter("use_first_valid", use_first_valid_);
@@ -311,6 +313,7 @@ void PointCloudColor::readParams()
   min_warn_period_    = std::max(0.0, this->declare_parameter("min_warn_period", min_warn_period_));
 
   RCLCPP_INFO(this->get_logger(), "Synchronize: %i", synchronize_);
+  RCLCPP_INFO(this->get_logger(), "Print delay: %i", print_delay_);
   RCLCPP_INFO(this->get_logger(), "Maximum image age: %.1f s.", max_image_age_);
   RCLCPP_INFO(this->get_logger(), "Maximum cloud age: %.1f s.", max_cloud_age_);
   RCLCPP_INFO(this->get_logger(), "Use first valid projection: %s.", use_first_valid_ ? "yes" : "no");
@@ -534,8 +537,12 @@ void PointCloudColor::updateWarningTime(int i, int type)
   last_cam_warning_[key] = this->now();
 }
 
+
+
 void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPtr & cloud_in)
 {
+  auto start = std::chrono::high_resolution_clock::now();
+
   double cloud_age = (this->now() - rclcpp::Time(cloud_in->header.stamp)).seconds();
   if (cloud_age > max_cloud_age_)
   {
@@ -734,6 +741,9 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
     }
   }
   cloud_pub_.publish(cloud_out);
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+  RCLCPP_INFO(this->get_logger(), "Callback execution time: %ld µs", duration.count());
 }
 
 } /* namespace point_cloud_color */
