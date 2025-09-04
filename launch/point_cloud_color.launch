@@ -6,35 +6,76 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
 -->
 
 <launch>
-  <arg name="image_transport" default="raw" />
-  <arg name="point_cloud_transport" default="raw" />
-  <arg name="tf_prefix" default="" />
+  <arg name="image_transport"         default="raw" />
+  <arg name="point_cloud_transport"   default="raw" />
+  <arg name="fixed_frame"               default="odom" />
+  <arg name="num_cameras"            default="1"/>
+  <arg name="max_image_age"          default="50000000.0"/>
+  <arg name="max_cloud_age"          default="50000000.0"/>
+  <arg name="use_first_valid"        default="true"/>
+  <arg name="image_queue_size"       default="1"/>
+  <arg name="point_cloud_queue_size" default="50"/>
+  <arg name="wait_for_transform"     default="0.5"/>
+  <arg name="default_color"          default="'0x00000000'"/>
+  <arg name="synchronize"            default="false"/>
+  <arg name="print_delay"            default="false"/>
+  <arg name="field_name"             default="semantic_cost"/>
+  <arg name="semantic_segmentation"  default="true"/>
+  <arg name="road_cost"              default="0"/>
+  <arg name="other_cost"              default="1"/>
 
-  <node name="point_cloud_color" exec="point_cloud_color" pkg="point_cloud_color" respawn="true">
+
+  <node name="point_cloud_color_front" exec="point_cloud_color" pkg="point_cloud_color" respawn="true">
     <param name="image_transport"        value="$(var image_transport)"/>
     <param name="point_cloud_transport"  value="$(var point_cloud_transport)"/>
-    <param name="fixed_frame"            value="$(var tf_prefix)base_link"/>
-    <param name="num_cameras"            value="1"/>
-    <param name="max_image_age"          value="50000000.0"/>
-    <param name="max_cloud_age"          value="50000000.0"/>
-    <param name="use_first_valid"        value="true"/>
-    <param name="image_queue_size"       value="1"/>
-    <param name="point_cloud_queue_size" value="50"/>
-    <param name="wait_for_transform"     value="0.5"/>
-    <param name="default_color"          value="'0x00000000'"/>
-    <param name="synchronize"            value="false"/>
-    <param name="print_delay"            value="false"/>
-    <param name="field_name"             value="semantic_cost"/>
-    <!-- <param name="field_type"             value="2"/> -->
-    <param name="semantic_segmentation"  value="true"/>
-    <param name="road_cost"              value="100"/>
-    <param name="other_cost"              value="200"/>
+    <param name="fixed_frame"            value="$(var fixed_frame)"/>
+    <param name="num_cameras"            value="$(var num_cameras)"/>
+    <param name="max_image_age"          value="$(var max_image_age)"/>
+    <param name="max_cloud_age"          value="$(var max_cloud_age)"/>
+    <param name="use_first_valid"        value="$(var use_first_valid)"/>
+    <param name="image_queue_size"       value="$(var image_queue_size)"/>
+    <param name="point_cloud_queue_size" value="$(var point_cloud_queue_size)"/>
+    <param name="wait_for_transform"     value="$(var wait_for_transform)"/>
+    <param name="default_color"          value="$(var default_color)"/>
+    <param name="synchronize"            value="$(var synchronize)"/>
+    <param name="print_delay"            value="$(var print_delay)"/>
+    <param name="field_name"             value="$(var field_name)"/>
+    <param name="semantic_segmentation"  value="$(var semantic_segmentation)"/>
+    <param name="road_cost"              value="$(var road_cost)"/>
+    <param name="other_cost"              value="$(var other_cost)"/>
     
 
-    <remap from="camera_0/image" to="/luxonis/oak/right/image_raw" />
-    <remap from="camera_0/camera_info" to="/luxonis/oak/right/camera_info" />
-    <remap from="cloud_in" to="livox/lidar" />
-    <remap from="cloud_out" to="livox/lidar/color" />
+    <remap from="camera_0/image" to="/luxonis/oak/nn/mask/image_raw" />
+    <remap from="camera_0/camera_info" to="/luxonis/oak/nn/mask/camera_info" />
+    <remap from="cloud_in" to="livox/lidar_front" />
+    <remap from="cloud_out" to="livox/lidar_front/segmentation" />
+
+  </node>
+
+  <node name="point_cloud_color_rear" exec="point_cloud_color" pkg="point_cloud_color" respawn="true">
+    <param name="image_transport"        value="$(var image_transport)"/>
+    <param name="point_cloud_transport"  value="$(var point_cloud_transport)"/>
+    <param name="fixed_frame"            value="$(var fixed_frame)"/>
+    <param name="num_cameras"            value="$(var num_cameras)"/>
+    <param name="max_image_age"          value="$(var max_image_age)"/>
+    <param name="max_cloud_age"          value="$(var max_cloud_age)"/>
+    <param name="use_first_valid"        value="$(var use_first_valid)"/>
+    <param name="image_queue_size"       value="$(var image_queue_size)"/>
+    <param name="point_cloud_queue_size" value="$(var point_cloud_queue_size)"/>
+    <param name="wait_for_transform"     value="$(var wait_for_transform)"/>
+    <param name="default_color"          value="$(var default_color)"/>
+    <param name="synchronize"            value="$(var synchronize)"/>
+    <param name="print_delay"            value="$(var print_delay)"/>
+    <param name="field_name"             value="$(var field_name)"/>
+    <param name="semantic_segmentation"  value="$(var semantic_segmentation)"/>
+    <param name="road_cost"              value="$(var road_cost)"/>
+    <param name="other_cost"              value="$(var other_cost)"/>
+    
+
+    <remap from="camera_0/image" to="/luxonis/rear/nn/mask/image_raw" />
+    <remap from="camera_0/camera_info" to="/luxonis/rear/nn/mask/camera_info" />
+    <remap from="cloud_in" to="livox/lidar_rear" />
+    <remap from="cloud_out" to="livox/lidar_rear/segmentation" />
 
   </node>
 </launch>
