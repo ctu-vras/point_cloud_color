@@ -23,7 +23,13 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="wait_for_transform"     value="0.5"/>
     <param name="default_color"          value="'0x00000000'"/>
     <param name="synchronize"            value="false"/>
-    <param name="print_delay"            value="true"/>
+    <param name="print_delay"            value="false"/>
+    <param name="field_name"             value="semantic_cost"/>
+    <!-- <param name="field_type"             value="2"/> -->
+    <param name="semantic_segmentation"  value="true"/>
+    <param name="road_cost"              value="100"/>
+    <param name="other_cost"              value="200"/>
+    
 
     <remap from="camera_0/image" to="/luxonis/oak/right/image_raw" />
     <remap from="camera_0/camera_info" to="/luxonis/oak/right/camera_info" />

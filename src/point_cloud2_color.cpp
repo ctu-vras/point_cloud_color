@@ -42,6 +42,10 @@ using sensor_msgs::msg::PointCloud2;
 using sensor_msgs::msg::PointField;
 using sensor_msgs::msg::CameraInfo;
 
+auto other_c = cv::Vec3b(0, 0, 0);
+auto road_c = cv::Vec3b(128, 64, 128);
+auto sky_c = cv::Vec3b(235, 206, 135);
+
 size_t point_field_type_size(uint8_t datatype)
 {
   switch (datatype)
@@ -198,6 +202,9 @@ private:
   std::string field_name_ = "rgb";
   int field_type_ = sensor_msgs::msg::PointField::FLOAT32;
   float default_color_ = 0.0;
+  bool semantic_segmentation_ = false;
+  int road_cost_ = 0;
+  int other_cost_ = 0;
   int num_cameras_ = 1;
   bool synchronize_ = false;
   bool print_delay_ = false;
@@ -238,7 +245,7 @@ private:
 };
 
 void PointCloudColor::readParams()
-{
+{  
   fixed_frame_        = this->declare_parameter("fixed_frame", fixed_frame_);
   RCLCPP_INFO(this->get_logger(), "Fixed frame: %s.", fixed_frame_.c_str());
 
@@ -267,9 +274,9 @@ void PointCloudColor::readParams()
   else
   {
     default_color_ = this->declare_parameter("default_color", default_color_);
-    if (field_type_ == sensor_msgs::msg::PointField::UINT8)
+    if (field_type_ == sensor_msgs::msg::PointField::UINT8) {
       default_color_ = clip<float>(default_color_, 0.0f, static_cast<float>(std::numeric_limits<uint8_t>::max()));
-    else if (field_type_ == sensor_msgs::msg::PointField::UINT16)
+    } else if (field_type_ == sensor_msgs::msg::PointField::UINT16)
       default_color_ = clip<float>(default_color_, 0.0f, static_cast<float>(std::numeric_limits<uint16_t>::max()));
     RCLCPP_INFO(this->get_logger(), "Default color: %.0f.", default_color_);
   }
@@ -301,6 +308,7 @@ void PointCloudColor::readParams()
     }
   }
 
+  semantic_segmentation_ = this->declare_parameter("semantic_segmentation", semantic_segmentation_);
   synchronize_        = this->declare_parameter("synchronize", synchronize_);
   print_delay_        = this->declare_parameter("print_delay", print_delay_);
   max_image_age_      = this->declare_parameter("max_image_age", max_image_age_);
@@ -311,7 +319,11 @@ void PointCloudColor::readParams()
   cloud_queue_size_   = std::max(1, static_cast<int>(this->declare_parameter("cloud_queue_size", cloud_queue_size_)));
   wait_for_transform_ = std::max(0.0, this->declare_parameter("wait_for_transform", wait_for_transform_));
   min_warn_period_    = std::max(0.0, this->declare_parameter("min_warn_period", min_warn_period_));
+  road_cost_ = this->declare_parameter("road_cost", road_cost_);
+  other_cost_ = this->declare_parameter("other_cost", other_cost_);
 
+  RCLCPP_INFO(this->get_logger(), "Semantic segmentation: %s.", semantic_segmentation_ ? "yes" : "no");
+  RCLCPP_INFO(this->get_logger(), "Road cost: %d Other cost: %d", road_cost_, other_cost_);
   RCLCPP_INFO(this->get_logger(), "Synchronize: %i", synchronize_);
   RCLCPP_INFO(this->get_logger(), "Print delay: %i", print_delay_);
   RCLCPP_INFO(this->get_logger(), "Maximum image age: %.1f s.", max_image_age_);
@@ -560,7 +572,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
 
   const size_t num_points = static_cast<size_t>(cloud_in->width) * cloud_in->height;
   
-// Create cloud copy with extra field
+  // Create cloud copy with extra field
   auto cloud_out = std::make_shared<sensor_msgs::msg::PointCloud2>();
   copy_cloud_metadata(*cloud_in, *cloud_out);
   append_field(field_name_, 1, field_type_, *cloud_out);
@@ -573,21 +585,29 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
   sensor_msgs::PointCloud2Iterator<uint16_t> color_begin_u16(*cloud_out, field_name_);
 
   // Set default color
-  for (size_t j = 0; j < num_points; ++j)
-  {
-    switch (field_type_)
+  if (semantic_segmentation_) {
+    for (size_t j = 0; j < num_points; ++j)
     {
-      case sensor_msgs::msg::PointField::UINT8:
-        *(color_begin_u8 + j) = static_cast<uint8_t>(default_color_);
-        break;
-      case sensor_msgs::msg::PointField::UINT16:
-        *(color_begin_u16 + j) = static_cast<uint16_t>(default_color_);
-        break;
-      case sensor_msgs::msg::PointField::FLOAT32:
-        *(color_begin_f + j) = default_color_;
-        break;
+      *(color_begin_u8 + j) = static_cast<uint8_t>(other_cost_);
+    }
+  } else {
+    for (size_t j = 0; j < num_points; ++j)
+    {
+      switch (field_type_)
+      {
+        case sensor_msgs::msg::PointField::UINT8:
+          *(color_begin_u8 + j) = static_cast<uint8_t>(default_color_);
+          break;
+        case sensor_msgs::msg::PointField::UINT16:
+          *(color_begin_u16 + j) = static_cast<uint16_t>(default_color_);
+          break;
+        case sensor_msgs::msg::PointField::FLOAT32:
+          *(color_begin_f + j) = default_color_;
+          break;
+      }
     }
   }
+  
   
   // Initialize projection distances (used as quality metric)
   std::vector<float> dist(num_points, std::numeric_limits<float>::infinity());
@@ -720,30 +740,43 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
       dist[indices[j]] = r;
 
       int offset = int(indices[j]);
-      switch (field_type_)
-      {
-        case sensor_msgs::msg::PointField::UINT8:
-        {
-          *(color_begin_u8 + offset) =  images_[i]->image.at<uint8_t>(yi, xi);
-          break;
+
+      if (semantic_segmentation_) {
+        if (images_[i]->image.at<cv::Vec3b>(yi, xi) == road_c) {
+          *(color_begin_u8 + offset) = road_cost_;
         }
-        case sensor_msgs::msg::PointField::UINT16:
+      } else {
+        switch (field_type_)
         {
-          *(color_begin_u16 + offset) =  images_[i]->image.at<uint16_t>(yi, xi);
-          break;
-        }
-        case sensor_msgs::msg::PointField::FLOAT32:
-        {
-          *(color_begin_f + offset) = rgb_to_float(images_[i]->image.at<cv::Vec3b>(yi, xi));
-          break;
+          case sensor_msgs::msg::PointField::UINT8:
+          {
+            *(color_begin_u8 + offset) =  images_[i]->image.at<uint8_t>(yi, xi);
+            break;
+          }
+          case sensor_msgs::msg::PointField::UINT16:
+          {
+            *(color_begin_u16 + offset) =  images_[i]->image.at<uint16_t>(yi, xi);
+            break;
+          }
+          case sensor_msgs::msg::PointField::FLOAT32:
+          {
+            RCLCPP_WARN(this->get_logger(), "barva %d %d %d", images_[i]->image.at<cv::Vec3b>(yi, xi)[0],
+                  images_[i]->image.at<cv::Vec3b>(yi, xi)[1],
+                  images_[i]->image.at<cv::Vec3b>(yi, xi)[2]);
+            *(color_begin_f + offset) = rgb_to_float(images_[i]->image.at<cv::Vec3b>(yi, xi));
+            break;
+          }
         }
       }
     }
   }
   cloud_pub_.publish(cloud_out);
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-  RCLCPP_INFO(this->get_logger(), "Callback execution time: %ld µs", duration.count());
+
+  if (print_delay_) {
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    RCLCPP_INFO(this->get_logger(), "Callback execution time: %ld µs", duration.count());
+  }
 }
 
 } /* namespace point_cloud_color */
