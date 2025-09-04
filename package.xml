@@ -1,37 +1,39 @@
-<package format="2">
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
   <name>point_cloud_color</name>
   <version>1.2.1</version>
   <description>
     Package for coloring point clouds using calibrated cameras.
   </description>
   <maintainer email="peckama2@fel.cvut.cz">Martin Pecka</maintainer>
-  <license>BSD</license>
+  <license>BSD-3-Clause</license>
   
   <url>https://github.com/ctu-vras/point_cloud_color</url>
-  <author>Tomas Petricek</author>
+  <author>Tomas Petricek (ROS2 port by Adam Herold)</author>
   
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
   
   <build_depend>cv_bridge</build_depend>
   <build_depend>image_transport</build_depend>
-  <build_depend>nodelet</build_depend>
   <build_depend>point_cloud_transport</build_depend>
-  <build_depend>roscpp</build_depend>
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_components</build_depend>
   <build_depend>sensor_msgs</build_depend>
   <build_depend>tf2_eigen</build_depend>
   <build_depend>tf2_ros</build_depend>
+  <build_depend>OpenCV</build_depend>
   
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>image_transport</exec_depend>
-  <exec_depend>nodelet</exec_depend>
   <exec_depend>point_cloud_transport</exec_depend>
-  <exec_depend>roscpp</exec_depend>
+  <exec_depend>rclcpp</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>tf2_eigen</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>OpenCV</exec_depend>
 
   <export>
-    <nodelet plugin="${prefix}/point_cloud_color_plugins.xml" />
+    <build_type>ament_cmake</build_type>
   </export>
 </package>
-
