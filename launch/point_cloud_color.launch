@@ -21,8 +21,9 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
   <arg name="print_delay"            default="false"/>
   <arg name="field_name"             default="semantic_cost"/>
   <arg name="semantic_segmentation"  default="true"/>
-  <arg name="road_cost"              default="0"/>
-  <arg name="other_cost"              default="1"/>
+  <arg name="road_cost"              default="0."/>
+  <arg name="default_cost"           default="0.5"/>
+  <arg name="untraversable_cost"     default="1."/>
 
 
   <node name="point_cloud_color_front" exec="point_cloud_color" pkg="point_cloud_color" respawn="true">
@@ -42,7 +43,8 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="field_name"             value="$(var field_name)"/>
     <param name="semantic_segmentation"  value="$(var semantic_segmentation)"/>
     <param name="road_cost"              value="$(var road_cost)"/>
-    <param name="other_cost"              value="$(var other_cost)"/>
+    <param name="default_cost"           value="$(var default_cost)"/>
+    <param name="untraversable_cost"     value="$(var untraversable_cost)"/>
     
 
     <remap from="camera_0/image" to="/luxonis/oak/nn/mask/image_raw" />
@@ -69,7 +71,8 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="field_name"             value="$(var field_name)"/>
     <param name="semantic_segmentation"  value="$(var semantic_segmentation)"/>
     <param name="road_cost"              value="$(var road_cost)"/>
-    <param name="other_cost"              value="$(var other_cost)"/>
+    <param name="default_cost"           value="$(var default_cost)"/>
+    <param name="untraversable_cost"     value="$(var untraversable_cost)"/>
     
 
     <remap from="camera_0/image" to="/luxonis/rear/nn/mask/image_raw" />

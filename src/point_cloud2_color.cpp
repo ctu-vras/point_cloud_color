@@ -203,8 +203,9 @@ private:
   int field_type_ = sensor_msgs::msg::PointField::FLOAT32;
   float default_color_ = 0.0;
   bool semantic_segmentation_ = false;
-  int road_cost_ = 0;
-  int other_cost_ = 0;
+  float road_cost_ = 0;
+  float default_cost_ = 0.5;
+  float untraversable_cost_ = 1;
   int num_cameras_ = 1;
   bool synchronize_ = false;
   bool print_delay_ = false;
@@ -320,10 +321,11 @@ void PointCloudColor::readParams()
   wait_for_transform_ = std::max(0.0, this->declare_parameter("wait_for_transform", wait_for_transform_));
   min_warn_period_    = std::max(0.0, this->declare_parameter("min_warn_period", min_warn_period_));
   road_cost_ = this->declare_parameter("road_cost", road_cost_);
-  other_cost_ = this->declare_parameter("other_cost", other_cost_);
+  default_cost_ = this->declare_parameter("default_cost", default_cost_);
+  untraversable_cost_ = this->declare_parameter("untraversable_cost", untraversable_cost_);
 
   RCLCPP_INFO(this->get_logger(), "Semantic segmentation: %s.", semantic_segmentation_ ? "yes" : "no");
-  RCLCPP_INFO(this->get_logger(), "Road cost: %d Other cost: %d", road_cost_, other_cost_);
+  RCLCPP_INFO(this->get_logger(), "Road cost: %f Default cost: %f Untraversable cost: %f", road_cost_, default_cost_, untraversable_cost_);
   RCLCPP_INFO(this->get_logger(), "Synchronize: %i", synchronize_);
   RCLCPP_INFO(this->get_logger(), "Print delay: %i", print_delay_);
   RCLCPP_INFO(this->get_logger(), "Maximum image age: %.1f s.", max_image_age_);
@@ -588,7 +590,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
   if (semantic_segmentation_) {
     for (size_t j = 0; j < num_points; ++j)
     {
-      *(color_begin_u8 + j) = static_cast<uint8_t>(other_cost_);
+      *(color_begin_u8 + j) = default_cost_;
     }
   } else {
     for (size_t j = 0; j < num_points; ++j)
@@ -744,6 +746,9 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
       if (semantic_segmentation_) {
         if (images_[i]->image.at<cv::Vec3b>(yi, xi) == road_c) {
           *(color_begin_u8 + offset) = road_cost_;
+        } else if (images_[i]->image.at<cv::Vec3b>(yi, xi) == other_c ||
+                images_[i]->image.at<cv::Vec3b>(yi, xi) == sky_c) {
+          *(color_begin_u8 + offset) = untraversable_cost_;
         }
       } else {
         switch (field_type_)
