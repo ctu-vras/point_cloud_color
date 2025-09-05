@@ -653,14 +653,20 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
 
     // Transform lookup
     geometry_msgs::msg::TransformStamped cloud_to_cam_tf;
-    try
-    {
-      double wait = wait_for_transform_ -
-                    (this->now() - rclcpp::Time(images_[i]->header.stamp)).seconds();
-      cloud_to_cam_tf = tf_buffer_.lookupTransform(
-        images_[i]->header.frame_id, rclcpp::Time(images_[i]->header.stamp),
-        cloud_out->header.frame_id, rclcpp::Time(cloud_in->header.stamp),
-        fixed_frame_, tf2::durationFromSec(wait));
+    tf2::Stamped<tf2::Transform> transform;
+
+    // Listen to transform between mapFrameId_ and targetFrameInitSubmap_ and use z value for initialization
+    try {
+      cloud_to_cam_tf = tf_buffer_.lookupTransform(images_[i]->header.frame_id, cloud_out->header.frame_id, rclcpp::Time(0), rclcpp::Duration::from_seconds(5.0));
+
+    // try
+    // {
+    //   double wait = wait_for_transform_ -
+    //                 (this->now() - rclcpp::Time(images_[i]->header.stamp)).seconds();
+    //   cloud_to_cam_tf = tf_buffer_.lookupTransform(
+    //     images_[i]->header.frame_id, rclcpp::Time(images_[i]->header.stamp),
+    //     cloud_out->header.frame_id, rclcpp::Time(cloud_in->header.stamp),
+    //     fixed_frame_, tf2::durationFromSec(wait));
     }
     catch (tf2::TransformException & e)
     {
