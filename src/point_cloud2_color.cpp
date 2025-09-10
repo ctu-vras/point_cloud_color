@@ -204,7 +204,7 @@ private:
   float default_color_ = 0.0;
   bool semantic_segmentation_ = false;
   float road_cost_ = 0;
-  float default_cost_ = 0.5;
+  float default_cost_ = std::nanf("");
   float untraversable_cost_ = 1;
   int num_cameras_ = 1;
   bool synchronize_ = false;
@@ -217,6 +217,7 @@ private:
   int cloud_queue_size_ = 1;
   double wait_for_transform_ = 1.0;
   double min_warn_period_ = 10.0;
+  bool rectified_images_ = false;
 
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_sub_;
@@ -322,7 +323,11 @@ void PointCloudColor::readParams()
   min_warn_period_    = std::max(0.0, this->declare_parameter("min_warn_period", min_warn_period_));
   road_cost_ = this->declare_parameter("road_cost", road_cost_);
   default_cost_ = this->declare_parameter("default_cost", default_cost_);
+  if (default_cost_ < 0) {
+    default_cost_ = std::nanf("");
+  }
   untraversable_cost_ = this->declare_parameter("untraversable_cost", untraversable_cost_);
+  rectified_images_ = this->declare_parameter("rectified_images", rectified_images_);
 
   RCLCPP_INFO(this->get_logger(), "Semantic segmentation: %s.", semantic_segmentation_ ? "yes" : "no");
   RCLCPP_INFO(this->get_logger(), "Road cost: %f Default cost: %f Untraversable cost: %f", road_cost_, default_cost_, untraversable_cost_);
@@ -336,6 +341,7 @@ void PointCloudColor::readParams()
   RCLCPP_INFO(this->get_logger(), "Cloud queue size: %i", cloud_queue_size_);
   RCLCPP_INFO(this->get_logger(), "Wait for transform timeout: %.2f s.", wait_for_transform_);
   RCLCPP_INFO(this->get_logger(), "Minimum period between warnings: %.2f s.", min_warn_period_);
+  RCLCPP_INFO(this->get_logger(), "Using already rectified images: %s.", rectified_images_ ? "yes" : "no");
 }
 
 void PointCloudColor::setupPublishers()
@@ -590,7 +596,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
   if (semantic_segmentation_) {
     for (size_t j = 0; j < num_points; ++j)
     {
-      *(color_begin_u8 + j) = default_cost_;
+      *(color_begin_f + j) = default_cost_;
     }
   } else {
     for (size_t j = 0; j < num_points; ++j)
@@ -648,8 +654,23 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
                           const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->k[0])));
     cv::Mat dist_coeffs(1, static_cast<int>(cam_infos_[i]->d.size()), CV_64FC1,
                         const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->d[0])));
+
+
+    if (rectified_images_) {
+        // Fill camera_matrix with the first 3 columns of p
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                camera_matrix.at<double>(row, col) = cam_infos_[i]->p[row * 4 + col];
+            }
+        }
+        // Annulate d
+        dist_coeffs = cv::Mat::zeros(dist_coeffs.size(), dist_coeffs.type());
+    }
+
     camera_matrix.convertTo(camera_matrix, CV_32FC1);
     dist_coeffs.convertTo(dist_coeffs, CV_32FC1);
+
+    //dist_coeffs = cv::Mat::zeros(dist_coeffs.size(), dist_coeffs.type());
 
     // Transform lookup
     geometry_msgs::msg::TransformStamped cloud_to_cam_tf;
@@ -748,13 +769,18 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
       dist[indices[j]] = r;
 
       int offset = int(indices[j]);
-
+      if(yi == cam_infos_[i]->height/2 && xi == cam_infos_[i]->width/2) {
+          
+          RCLCPP_WARN(this->get_logger(), "barva %d %d %d", images_[i]->image.at<cv::Vec3b>(yi, xi)[0],
+                  images_[i]->image.at<cv::Vec3b>(yi, xi)[1],
+                  images_[i]->image.at<cv::Vec3b>(yi, xi)[2]);
+      }
       if (semantic_segmentation_) {
         if (images_[i]->image.at<cv::Vec3b>(yi, xi) == road_c) {
-          *(color_begin_u8 + offset) = road_cost_;
+          *(color_begin_f + offset) = road_cost_;
         } else if (images_[i]->image.at<cv::Vec3b>(yi, xi) == other_c ||
                 images_[i]->image.at<cv::Vec3b>(yi, xi) == sky_c) {
-          *(color_begin_u8 + offset) = untraversable_cost_;
+          *(color_begin_f + offset) = untraversable_cost_;
         }
       } else {
         switch (field_type_)
