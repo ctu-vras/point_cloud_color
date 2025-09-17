@@ -10,8 +10,8 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
   <arg name="point_cloud_transport"   default="raw" />
   <arg name="fixed_frame"               default="odom" />
   <arg name="num_cameras"            default="2"/>
-  <arg name="max_image_age"          default="50000000.0"/>
-  <arg name="max_cloud_age"          default="50000000.0"/>
+  <arg name="max_image_age"          default="3.0"/>
+  <arg name="max_cloud_age"          default="3.0"/>
   <arg name="use_first_valid"        default="true"/>
   <arg name="image_queue_size"       default="1"/>
   <arg name="point_cloud_queue_size" default="50"/>
@@ -47,10 +47,10 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="untraversable_cost"     value="$(var untraversable_cost)"/>
     <param name="rectified_images"       value="$(var rectified_images)"/> 
 
-    <remap from="camera_0/image" to="/luxonis/oak/nn/mask/image_rect" />
-    <remap from="camera_0/camera_info" to="/luxonis/oak/nn/mask/camera_info" />
-    <remap from="camera_1/image" to="/luxonis/rear/nn/mask/image_rect" />
-    <remap from="camera_1/camera_info" to="/luxonis/rear/nn/mask/camera_info" />
+    <remap from="camera_0/image" to="/luxonis/oak/nn/cost/image_rect" />
+    <remap from="camera_0/camera_info" to="/luxonis/oak/nn/cost/camera_info" />
+    <remap from="camera_1/image" to="/luxonis/rear/nn/cost/image_rect" />
+    <remap from="camera_1/camera_info" to="/luxonis/rear/nn/cost/camera_info" />
     <remap from="cloud_in" to="geometric_traversability_cloud" />
     <remap from="cloud_out" to="traversability_cloud" />
 
