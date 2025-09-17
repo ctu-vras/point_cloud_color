@@ -478,12 +478,13 @@ bool PointCloudColor::imageCompatible(const sensor_msgs::msg::Image & image) con
 {
   // Check image type is compatible with field data type.
   size_t elem_size = image.step / image.width;
- RCLCPP_WARN(this->get_logger(),
-                  "%d %d %d",
-                   image.step, image.width, field_type_);
-  return ((field_type_ == sensor_msgs::msg::PointField::FLOAT32 && elem_size == 3) ||
+  if (semantic_segmentation_) {
+    return (field_type_ == sensor_msgs::msg::PointField::FLOAT32 && point_field_type_size(field_type_) == elem_size);
+  } else {
+    return ((field_type_ == sensor_msgs::msg::PointField::FLOAT32 && elem_size == 3) ||
           (field_type_ == sensor_msgs::msg::PointField::FLOAT32 && elem_size == 1) ||
-          ( point_field_type_size(field_type_) == elem_size));
+          (field_type_ != sensor_msgs::msg::PointField::FLOAT32 && point_field_type_size(field_type_) == elem_size));
+  }
 }
 
 void PointCloudColor::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr & image, int i)
@@ -504,7 +505,11 @@ void PointCloudColor::imageCallback(const sensor_msgs::msg::Image::ConstSharedPt
 
   if (field_type_ == sensor_msgs::msg::PointField::FLOAT32)
   {
-    images_[i] = cv_bridge::toCvShare(image);//sensor_msgs::image_encodings::BGR8);
+    if (semantic_segmentation_) {
+      images_[i] = cv_bridge::toCvShare(image);
+    } else {
+      images_[i] = cv_bridge::toCvShare(image, sensor_msgs::image_encodings::BGR8);
+    }
   }
   else
   {
@@ -772,22 +777,6 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
       dist[indices[j]] = r;
 
       int offset = int(indices[j]);
-      if(yi == cam_infos_[i]->height/2 && xi == cam_infos_[i]->width/2) {
-          
-          RCLCPP_WARN(this->get_logger(), "barva %f", images_[i]->image.at<float>(yi, xi));
-      }
-      if(yi == 0 && xi == 0) {
-          
-          RCLCPP_WARN(this->get_logger(), "barva %f", images_[i]->image.at<float>(yi, xi));
-      }
-
-      //if (semantic_segmentation_) {
-      //  if (images_[i]->image.at<cv::Vec3b>(yi, xi) == road_c) {
-      //    *(color_begin_f + offset) = road_cost_;
-      //  } else if (images_[i]->image.at<cv::Vec3b>(yi, xi) == other_c ||
-      //          images_[i]->image.at<cv::Vec3b>(yi, xi) == sky_c) {
-      //    *(color_begin_f + offset) = untraversable_cost_;
-      //  }
       if (semantic_segmentation_) {
         *(color_begin_f + offset) = images_[i]->image.at<float>(yi, xi);
       } else {
@@ -805,9 +794,9 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
           }
           case sensor_msgs::msg::PointField::FLOAT32:
           {
-            RCLCPP_WARN(this->get_logger(), "barva %d %d %d", images_[i]->image.at<cv::Vec3b>(yi, xi)[0],
-                  images_[i]->image.at<cv::Vec3b>(yi, xi)[1],
-                  images_[i]->image.at<cv::Vec3b>(yi, xi)[2]);
+            // RCLCPP_WARN(this->get_logger(), "barva %d %d %d", images_[i]->image.at<cv::Vec3b>(yi, xi)[0],
+            //       images_[i]->image.at<cv::Vec3b>(yi, xi)[1],
+            //       images_[i]->image.at<cv::Vec3b>(yi, xi)[2]);
             *(color_begin_f + offset) = rgb_to_float(images_[i]->image.at<cv::Vec3b>(yi, xi));
             break;
           }
