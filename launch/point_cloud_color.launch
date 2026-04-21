@@ -8,19 +8,20 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
 <launch>
   <arg name="image_transport"         default="raw" />
   <arg name="point_cloud_transport"   default="raw" />
-  <arg name="fixed_frame"               default="odom" />
-  <arg name="num_cameras"            default="2"/>
+  <arg name="fixed_frame"             default="local_odom" />
+  <arg name="num_cameras"            default="1"/>
   <arg name="max_image_age"          default="3.0"/>
   <arg name="max_cloud_age"          default="3.0"/>
   <arg name="use_first_valid"        default="true"/>
   <arg name="image_queue_size"       default="1"/>
   <arg name="point_cloud_queue_size" default="50"/>
   <arg name="wait_for_transform"     default="0.5"/>
-  <arg name="default_color"          default="'0x00000000'"/>
+  <arg name="default_color"          default="0.0"/>  <!--"'0x00000000'" for float32, 0.0 for uint8-->
   <arg name="synchronize"            default="false"/>
   <arg name="print_delay"            default="false"/>
   <arg name="field_name"             default="semantic_cost"/>
-  <arg name="semantic_segmentation"  default="true"/>
+  <arg name="field_type"             default="2"/>  <!--2 is unit8, 7 is float32-->
+  <arg name="semantic_segmentation"  default="false"/>
   <arg name="road_cost"              default="0."/>
   <arg name="default_cost"           default="-999."/> <!--negative value for default_cost is converted to nan-->
   <arg name="untraversable_cost"     default="1."/>
@@ -41,20 +42,19 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="synchronize"            value="$(var synchronize)"/>
     <param name="print_delay"            value="$(var print_delay)"/>
     <param name="field_name"             value="$(var field_name)"/>
+    <param name="field_type"             value="$(var field_type)"/>
     <param name="semantic_segmentation"  value="$(var semantic_segmentation)"/>
     <param name="road_cost"              value="$(var road_cost)"/>
     <param name="default_cost"           value="$(var default_cost)"/>
     <param name="untraversable_cost"     value="$(var untraversable_cost)"/>
     <param name="rectified_images"       value="$(var rectified_images)"/> 
 
-    <remap from="camera_0/image" to="/luxonis/oak/nn/cost/image_rect" />
-    <remap from="camera_0/camera_info" to="/luxonis/oak/nn/cost/camera_info" />
-    <remap from="camera_1/image" to="/luxonis/rear/nn/cost/image_rect" />
-    <remap from="camera_1/camera_info" to="/luxonis/rear/nn/cost/camera_info" />
+    <remap from="camera_0/image" to="/centerline/centerline_cost" />
+    <remap from="camera_0/camera_info" to="/luxonis/oak/rgb/camera_info" />
     <remap from="cloud_in" to="geometric_traversability_cloud" />
     <remap from="cloud_out" to="traversability_cloud" />
 
   </node>
-  <include file="$(find-pkg-share navigation)/launch/rect.launch">
-  </include>
+  <!-- <include file="$(find-pkg-share navigation)/launch/rect.launch">
+  </include> -->
 </launch>
