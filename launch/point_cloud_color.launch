@@ -5,6 +5,30 @@ SPDX-License-Identifier: BSD-3-Clause
 SPDX-FileCopyrightText: Czech Technical University in Prague
 -->
 
+<!--
+  FOR ROBOTOUR 2025 SEGMENTATION:
+  <arg name="default_color"          default="'0x00000000'"/>
+  <arg name="semantic_segmentation"  default="true"/>
+  <arg name="field_type"             default="7"/>
+  <arg name="num_cameras"            default="2"/>
+
+  <remap from="camera_0/image" to="/luxonis/oak/nn/cost/image_rect" />
+  <remap from="camera_0/camera_info" to="/luxonis/oak/nn/cost/camera_info" />
+  <remap from="camera_1/image" to="/luxonis/rear/nn/cost/image_rect" />
+  <remap from="camera_1/camera_info" to="/luxonis/rear/nn/cost/camera_info" />
+
+
+
+  FOR TEMESVAR 2026 SEGMENTATION:
+  <arg name="default_color"          default="0.0"/>
+  <arg name="semantic_segmentation"  default="false"/>
+  <arg name="field_type"             default="2"/>
+  <arg name="num_cameras"            default="1"/>
+
+  <remap from="camera_0/image" to="/centerline/centerline_cost" />
+  <remap from="camera_0/camera_info" to="/luxonis/oak/rgb/camera_info" />
+ -->
+
 <launch>
   <arg name="image_transport"         default="raw" />
   <arg name="point_cloud_transport"   default="raw" />
@@ -21,7 +45,7 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
   <arg name="print_delay"            default="false"/>
   <arg name="field_name"             default="semantic_cost"/>
   <arg name="field_type"             default="2"/>  <!--2 is unit8, 7 is float32-->
-  <arg name="semantic_segmentation"  default="false"/>
+  <arg name="semantic_segmentation"  default="false"/>  <!--this is a bit misleading, it was meant specifically for robotour 2025 segmentations-->
   <arg name="road_cost"              default="0."/>
   <arg name="default_cost"           default="-999."/> <!--negative value for default_cost is converted to nan-->
   <arg name="untraversable_cost"     default="1."/>
@@ -48,6 +72,7 @@ SPDX-FileCopyrightText: Czech Technical University in Prague
     <param name="default_cost"           value="$(var default_cost)"/>
     <param name="untraversable_cost"     value="$(var untraversable_cost)"/>
     <param name="rectified_images"       value="$(var rectified_images)"/> 
+    <param name="output_as_float"      value="true"/>
 
     <remap from="camera_0/image" to="/centerline/centerline_cost" />
     <remap from="camera_0/camera_info" to="/luxonis/oak/rgb/camera_info" />

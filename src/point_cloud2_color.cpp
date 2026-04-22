@@ -218,6 +218,8 @@ private:
   double wait_for_transform_ = 1.0;
   double min_warn_period_ = 10.0;
   bool rectified_images_ = false;
+  // NEW: when true, UINT8/UINT16 pixel values are written as FLOAT32 in the output field
+  bool output_as_float_ = false;
 
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_sub_;
@@ -232,6 +234,19 @@ private:
   std::vector<sensor_msgs::msg::CameraInfo::ConstSharedPtr> cam_infos_;
   std::vector<cv::Mat> camera_masks_;
   std::unordered_map<std::pair<int, int>, rclcpp::Time, PairHash> last_cam_warning_;
+
+  // Returns the field type that will actually be written to the output cloud.
+  // When output_as_float_ is set, integer types are promoted to FLOAT32.
+  uint8_t outputFieldType() const
+  {
+    if (output_as_float_ &&
+        (field_type_ == sensor_msgs::msg::PointField::UINT8 ||
+         field_type_ == sensor_msgs::msg::PointField::UINT16))
+    {
+      return sensor_msgs::msg::PointField::FLOAT32;
+    }
+    return static_cast<uint8_t>(field_type_);
+  }
 
   void readParams();
   void setupPublishers();
@@ -264,7 +279,13 @@ void PointCloudColor::readParams()
   }
   RCLCPP_INFO(this->get_logger(), "Field type: %i.", field_type_);
 
-
+  output_as_float_    = this->declare_parameter("output_as_float", output_as_float_);
+  if (output_as_float_ && field_type_ == sensor_msgs::msg::PointField::FLOAT32)
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "output_as_float has no effect when field_type is already FLOAT32.");
+  }
+  RCLCPP_INFO(this->get_logger(), "Output as float: %s.", output_as_float_ ? "yes" : "no");
 
   if (field_type_ == sensor_msgs::msg::PointField::FLOAT32)
   {
@@ -379,7 +400,6 @@ void PointCloudColor::setupSubscribers()
         (std::bind(&PointCloudColor::cameraCallback, this, std::placeholders::_1, std::placeholders::_2, i))
       );
       RCLCPP_WARN(this->get_logger(), "F\n");
-
     }
     else
     {
@@ -396,7 +416,6 @@ void PointCloudColor::setupSubscribers()
         { camInfoCallback(msg, i); }
       );
       RCLCPP_WARN(this->get_logger(), "H\n");
-
     }
   }
 
@@ -406,73 +425,7 @@ void PointCloudColor::setupSubscribers()
     std::bind(&PointCloudColor::cloudCallback, this, std::placeholders::_1)
   );
   RCLCPP_WARN(this->get_logger(), "I\n");
-
 }
-
-
-
-// void PointCloudColor::setupSubscribers()
-// {
-//   image_transport::ImageTransport it(shared_from_this());
-
-//   camera_subs_.resize(num_cameras_);
-//   image_subs_.resize(num_cameras_);
-//   camera_info_subs_.resize(num_cameras_);
-//   images_.resize(num_cameras_);
-//   cam_infos_.resize(num_cameras_);
-
-//   image_transport::TransportHints transport_hints(this);
-  
-//   for (int i = 0; i < num_cameras_; i++)
-//   {
-//     std::string image_topic = "camera_" + std::to_string(i) + "/image";
-//     RCLCPP_INFO(this->get_logger(), "Camera %i subscribes to %s.", i, image_topic.c_str());
-
-//     if (synchronize_)
-//     {
-//       // You will need to use message_filters for synchronization manually
-//       image_subs_[i] = this->create_subscription<sensor_msgs::msg::Image>(
-//         image_topic, rclcpp::QoS(image_queue_size_),
-//         [this, i](sensor_msgs::msg::Image::SharedPtr msg)
-//         {
-//           this->images_[i] = msg;
-//           this->trySyncCameraData(i);
-//         }
-//       );
-
-//       std::string info_topic = "camera_" + std::to_string(i) + "/camera_info";
-//       camera_info_subs_[i] = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-//         info_topic, rclcpp::QoS(image_queue_size_),
-//         [this, i](sensor_msgs::msg::CameraInfo::SharedPtr msg)
-//         {
-//           this->cam_infos_[i] = msg;
-//           this->trySyncCameraData(i);
-//         }
-//       );
-//     }
-//     else
-//     {
-//       image_subs_[i] = it.subscribe(
-//         image_topic, image_queue_size_,
-//         std::bind(&PointCloudColor::imageCallback, this, std::placeholders::_1, i)
-//       );
-
-//       std::string info_topic = "camera_" + std::to_string(i) + "/camera_info";
-//       camera_info_subs_[i] = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-//         info_topic, rclcpp::QoS(image_queue_size_),
-//         [this, i](sensor_msgs::msg::CameraInfo::SharedPtr msg)
-//         { camInfoCallback(msg, i); }
-//       );
-//     }
-//   }
-
-//   point_cloud_transport::PointCloudTransport pct(shared_from_this());
-//   cloud_sub_ = pct.subscribe(
-//     "cloud_in", cloud_queue_size_,
-//     std::bind(&PointCloudColor::cloudCallback, this, std::placeholders::_1)
-//   );
-// }
-
 
 bool PointCloudColor::imageCompatible(const sensor_msgs::msg::Image & image) const
 {
@@ -534,7 +487,6 @@ void PointCloudColor::camInfoCallback(const sensor_msgs::msg::CameraInfo::ConstS
   cam_infos_[i] = cam_info;
 }
 
-
 void PointCloudColor::cameraCallback(
   const sensor_msgs::msg::Image::ConstSharedPtr & image,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info,
@@ -565,8 +517,6 @@ void PointCloudColor::updateWarningTime(int i, int type)
   last_cam_warning_[key] = this->now();
 }
 
-
-
 void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPtr & cloud_in)
 {
   auto start = std::chrono::high_resolution_clock::now();
@@ -587,18 +537,22 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
   }
 
   const size_t num_points = static_cast<size_t>(cloud_in->width) * cloud_in->height;
+
+  // Determine the actual type written to the output field.
+  // When output_as_float_ is set, integer image types are promoted to FLOAT32.
+  const uint8_t out_field_type = outputFieldType();
   
   // Create cloud copy with extra field
   auto cloud_out = std::make_shared<sensor_msgs::msg::PointCloud2>();
   copy_cloud_metadata(*cloud_in, *cloud_out);
-  append_field(field_name_, 1, field_type_, *cloud_out);
+  append_field(field_name_, 1, out_field_type, *cloud_out);  // use out_field_type here
   cloud_out->data.resize(static_cast<size_t>(cloud_out->height) * cloud_out->width * cloud_out->point_step);
   copy_cloud_data(*cloud_in, *cloud_out);
 
-  sensor_msgs::PointCloud2Iterator<float> x_begin(*cloud_out, "x");
-  sensor_msgs::PointCloud2Iterator<float> color_begin_f(*cloud_out, field_name_);
+  sensor_msgs::PointCloud2Iterator<float>   x_begin(*cloud_out, "x");
+  sensor_msgs::PointCloud2Iterator<float>   color_begin_f(*cloud_out, field_name_);
   sensor_msgs::PointCloud2Iterator<uint8_t> color_begin_u8(*cloud_out, field_name_);
-  sensor_msgs::PointCloud2Iterator<uint16_t> color_begin_u16(*cloud_out, field_name_);
+  sensor_msgs::PointCloud2Iterator<uint16_t>color_begin_u16(*cloud_out, field_name_);
 
   // Set default color
   if (semantic_segmentation_) {
@@ -609,7 +563,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
   } else {
     for (size_t j = 0; j < num_points; ++j)
     {
-      switch (field_type_)
+      switch (out_field_type)
       {
         case sensor_msgs::msg::PointField::UINT8:
           *(color_begin_u8 + j) = static_cast<uint8_t>(default_color_);
@@ -663,7 +617,6 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
     cv::Mat dist_coeffs(1, static_cast<int>(cam_infos_[i]->d.size()), CV_64FC1,
                         const_cast<void *>(reinterpret_cast<const void *>(&cam_infos_[i]->d[0])));
 
-
     if (rectified_images_) {
         // Fill camera_matrix with the first 3 columns of p
         for (int row = 0; row < 3; ++row) {
@@ -682,20 +635,8 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
 
     // Transform lookup
     geometry_msgs::msg::TransformStamped cloud_to_cam_tf;
-    tf2::Stamped<tf2::Transform> transform;
-
-    // Listen to transform between mapFrameId_ and targetFrameInitSubmap_ and use z value for initialization
     try {
       cloud_to_cam_tf = tf_buffer_.lookupTransform(images_[i]->header.frame_id, cloud_out->header.frame_id, rclcpp::Time(0), rclcpp::Duration::from_seconds(5.0));
-
-    // try
-    // {
-    //   double wait = wait_for_transform_ -
-    //                 (this->now() - rclcpp::Time(images_[i]->header.stamp)).seconds();
-    //   cloud_to_cam_tf = tf_buffer_.lookupTransform(
-    //     images_[i]->header.frame_id, rclcpp::Time(images_[i]->header.stamp),
-    //     cloud_out->header.frame_id, rclcpp::Time(cloud_in->header.stamp),
-    //     fixed_frame_, tf2::durationFromSec(wait));
     }
     catch (tf2::TransformException & e)
     {
@@ -746,7 +687,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
     std::vector<cv::Vec2f> u_vec;
     cv::projectPoints(x_cam_vec, zero_vec, zero_vec, camera_matrix, dist_coeffs, u_vec);
 
-    for (int j = 0; j < indices.size(); ++j)
+    for (int j = 0; j < static_cast<int>(indices.size()); ++j)
     {
       // Skip points outside the image.
       const float x = u_vec[j][0];
@@ -776,7 +717,7 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
       }
       dist[indices[j]] = r;
 
-      int offset = int(indices[j]);
+      int offset = static_cast<int>(indices[j]);
       if (semantic_segmentation_) {
         *(color_begin_f + offset) = images_[i]->image.at<float>(yi, xi);
       } else {
@@ -784,19 +725,24 @@ void PointCloudColor::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstPt
         {
           case sensor_msgs::msg::PointField::UINT8:
           {
-            *(color_begin_u8 + offset) =  images_[i]->image.at<uint8_t>(yi, xi);
+            const float val = static_cast<float>(images_[i]->image.at<uint8_t>(yi, xi));
+            if (output_as_float_)
+              *(color_begin_f   + offset) = val/255.;
+            else
+              *(color_begin_u8  + offset) = static_cast<uint8_t>(val);
             break;
           }
           case sensor_msgs::msg::PointField::UINT16:
           {
-            *(color_begin_u16 + offset) =  images_[i]->image.at<uint16_t>(yi, xi);
+            const float val = static_cast<float>(images_[i]->image.at<uint16_t>(yi, xi));
+            if (output_as_float_)
+              *(color_begin_f   + offset) = val/255.;
+            else
+              *(color_begin_u16 + offset) = static_cast<uint16_t>(val);
             break;
           }
           case sensor_msgs::msg::PointField::FLOAT32:
           {
-            // RCLCPP_WARN(this->get_logger(), "barva %d %d %d", images_[i]->image.at<cv::Vec3b>(yi, xi)[0],
-            //       images_[i]->image.at<cv::Vec3b>(yi, xi)[1],
-            //       images_[i]->image.at<cv::Vec3b>(yi, xi)[2]);
             *(color_begin_f + offset) = rgb_to_float(images_[i]->image.at<cv::Vec3b>(yi, xi));
             break;
           }
